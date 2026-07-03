@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Priority, CaseType, CaseStatus } from "@prisma/client";
@@ -116,6 +116,47 @@ export function ProjectWorkspace({
   );
 
   const archivedView = selectedSuite === ARCHIVED;
+
+  // ---- resizable left panel --------------------------------------------
+  const DEFAULT_LEFT = 360;
+  const MIN_LEFT = 260;
+  const MAX_LEFT = 640;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [leftWidth, setLeftWidth] = useState(DEFAULT_LEFT);
+  const [resizing, setResizing] = useState(false);
+
+  // Restore saved width after mount (avoids SSR hydration mismatch).
+  useEffect(() => {
+    const v = Number(localStorage.getItem("ws-left-width"));
+    if (v >= MIN_LEFT && v <= MAX_LEFT) setLeftWidth(v);
+  }, []);
+
+  useEffect(() => {
+    if (!resizing) return;
+    const onMove = (e: MouseEvent) => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const w = Math.min(MAX_LEFT, Math.max(MIN_LEFT, e.clientX - rect.left));
+      setLeftWidth(w);
+    };
+    const onUp = () => setResizing(false);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [resizing]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("ws-left-width", String(leftWidth));
+    } catch {}
+  }, [leftWidth]);
 
   // ---- tree + descendant maps ------------------------------------------
   const childrenOf = useMemo(() => {
@@ -525,7 +566,11 @@ export function ProjectWorkspace({
       : "All test cases";
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
+    <div
+      ref={containerRef}
+      style={{ "--left-w": `${leftWidth}px` } as React.CSSProperties}
+      className="grid grid-cols-1 gap-4 lg:grid-cols-[var(--left-w)_1rem_minmax(0,1fr)] lg:gap-0"
+    >
       {/* ---------------- Left panel ---------------- */}
       <aside className="card animate-fade flex max-h-[calc(100vh-8rem)] flex-col p-3">
         <div className="mb-2 flex items-center gap-2">
@@ -615,6 +660,20 @@ export function ProjectWorkspace({
           </div>
         </div>
       </aside>
+
+      {/* ---------------- Resizer ---------------- */}
+      <div
+        onMouseDown={() => setResizing(true)}
+        onDoubleClick={() => setLeftWidth(DEFAULT_LEFT)}
+        title="Drag to resize · double-click to reset"
+        className="group hidden cursor-col-resize items-center justify-center lg:flex"
+      >
+        <div
+          className={`h-16 w-1 rounded-full transition-colors ${
+            resizing ? "bg-ring" : "bg-line group-hover:bg-ring"
+          }`}
+        />
+      </div>
 
       {/* ---------------- Right panel ---------------- */}
       <section className="card animate-fade flex min-h-[24rem] flex-col">
