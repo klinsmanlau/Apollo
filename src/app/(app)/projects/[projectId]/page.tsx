@@ -106,14 +106,22 @@ export default async function ProjectPage({
             <p className="mt-1 text-sm text-gray-500">{project.description}</p>
           )}
         </div>
-        {suiteOptions.length > 0 && (
+        <div className="flex items-center gap-2">
           <Link
-            href={`/projects/${projectId}/cases/new`}
-            className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700"
+            href={`/projects/${projectId}/import`}
+            className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50"
           >
-            + New test case
+            Import .xlsx
           </Link>
-        )}
+          {suiteOptions.length > 0 && (
+            <Link
+              href={`/projects/${projectId}/cases/new`}
+              className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700"
+            >
+              + New test case
+            </Link>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">

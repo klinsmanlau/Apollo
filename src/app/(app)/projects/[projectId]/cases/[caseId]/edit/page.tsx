@@ -50,12 +50,21 @@ export default async function EditCasePage({
         initial={{
           suiteId: testCase.suiteId,
           title: testCase.title,
+          objective: testCase.objective ?? "",
           preconditions: testCase.preconditions ?? "",
+          scriptType: testCase.scriptType,
           steps: (testCase.steps as unknown as Step[]) ?? [],
+          scriptBody: testCase.scriptBody ?? "",
           expectedResult: testCase.expectedResult ?? "",
           priority: testCase.priority,
           type: testCase.type,
+          status: testCase.status,
+          component: testCase.component ?? "",
+          ownerName: testCase.ownerName ?? "",
+          estimatedTime:
+            testCase.estimatedTime != null ? String(testCase.estimatedTime) : "",
           tags: testCase.tags,
+          coverage: testCase.coverage,
           externalRef: testCase.externalRef ?? "",
         }}
         submitLabel="Save changes"

@@ -12,31 +12,62 @@ export type FormState = { error?: string } | undefined;
  * Parse the case form. Steps and tags arrive as JSON strings from hidden
  * inputs maintained by the client-side editors.
  */
+function parseJsonField<T>(formData: FormData, key: string, fallback: T): T {
+  try {
+    return JSON.parse(String(formData.get(key) ?? "")) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 function parseCaseForm(formData: FormData) {
-  let steps: Step[] = [];
-  let tags: string[] = [];
-  try {
-    steps = JSON.parse(String(formData.get("steps") ?? "[]"));
-  } catch {
-    steps = [];
-  }
-  try {
-    tags = JSON.parse(String(formData.get("tags") ?? "[]"));
-  } catch {
-    tags = [];
-  }
+  const steps = parseJsonField<Step[]>(formData, "steps", []);
+  const tags = parseJsonField<string[]>(formData, "tags", []);
+  const coverage = parseJsonField<string[]>(formData, "coverage", []);
+  const estimatedTimeRaw = formData.get("estimatedTime");
 
   return caseSchema.safeParse({
     suiteId: formData.get("suiteId"),
     title: formData.get("title"),
+    objective: formData.get("objective"),
     preconditions: formData.get("preconditions"),
+    scriptType: formData.get("scriptType"),
     steps,
+    scriptBody: formData.get("scriptBody"),
     expectedResult: formData.get("expectedResult"),
     priority: formData.get("priority"),
     type: formData.get("type"),
+    status: formData.get("status"),
+    component: formData.get("component"),
+    ownerName: formData.get("ownerName"),
+    estimatedTime: estimatedTimeRaw ? estimatedTimeRaw : undefined,
     tags,
+    coverage,
     externalRef: formData.get("externalRef"),
   });
+}
+
+// Shared mapping from validated form data to Prisma columns.
+function toCaseData(d: import("@/lib/validation").CaseInput) {
+  return {
+    suiteId: d.suiteId,
+    title: d.title,
+    objective: d.objective || null,
+    preconditions: d.preconditions || null,
+    scriptType: d.scriptType,
+    steps: d.scriptType === "steps" ? d.steps : [],
+    scriptBody: d.scriptType === "steps" ? null : d.scriptBody || null,
+    expectedResult: d.expectedResult || null,
+    priority: d.priority,
+    type: d.type,
+    status: d.status,
+    component: d.component || null,
+    ownerName: d.ownerName || null,
+    estimatedTime: d.estimatedTime ?? null,
+    tags: d.tags,
+    coverage: d.coverage,
+    externalRef: d.externalRef || null,
+  };
 }
 
 export async function createCase(
@@ -50,21 +81,9 @@ export async function createCase(
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
-  const d = parsed.data;
 
   const created = await prisma.testCase.create({
-    data: {
-      suiteId: d.suiteId,
-      title: d.title,
-      preconditions: d.preconditions || null,
-      steps: d.steps,
-      expectedResult: d.expectedResult || null,
-      priority: d.priority,
-      type: d.type,
-      tags: d.tags,
-      externalRef: d.externalRef || null,
-      createdById: user.id,
-    },
+    data: { ...toCaseData(parsed.data), createdById: user.id },
   });
 
   revalidatePath(`/projects/${projectId}`);
@@ -83,21 +102,10 @@ export async function updateCase(
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
-  const d = parsed.data;
 
   await prisma.testCase.update({
     where: { id: caseId },
-    data: {
-      suiteId: d.suiteId,
-      title: d.title,
-      preconditions: d.preconditions || null,
-      steps: d.steps,
-      expectedResult: d.expectedResult || null,
-      priority: d.priority,
-      type: d.type,
-      tags: d.tags,
-      externalRef: d.externalRef || null,
-    },
+    data: toCaseData(parsed.data),
   });
 
   revalidatePath(`/projects/${projectId}/cases/${caseId}`);

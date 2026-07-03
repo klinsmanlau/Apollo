@@ -103,22 +103,56 @@ enum CaseType {
   usability
 }
 
+// Lifecycle state of a test case (mirrors Zephyr Scale's Draft/Approved/Deprecated).
+enum CaseStatus {
+  draft
+  approved
+  deprecated
+}
+
+// Which authoring format the test script uses.
+enum ScriptType {
+  steps // structured step-by-step (see `steps`)
+  plain // free-form plain text (see `scriptBody`)
+  bdd   // Gherkin / BDD (see `scriptBody`)
+}
+
 model TestCase {
   id             String   @id @default(cuid())
   suiteId        String
   title          String
+  // Source system key (e.g. Zephyr "TS-T7060"). Preserved on import and used
+  // to make re-imports idempotent. Nullable for manually-authored cases;
+  // Postgres allows multiple NULLs under a unique constraint.
+  sourceKey      String?  @unique
+  objective      String?
   preconditions  String?
-  // Ordered list of steps; each step is { action, expected }.
-  steps          Json     @default("[]")
+
+  // Script authoring. For scriptType=steps, `steps` holds an ordered list of
+  // { action, testData?, expected? }. For plain/bdd, `scriptBody` holds the text.
+  scriptType     ScriptType @default(steps)
+  steps          Json       @default("[]")
+  scriptBody     String?
   expectedResult String?
-  priority       Priority @default(medium)
-  type           CaseType @default(functional)
-  tags           String[] @default([])
-  // Optional Jira issue key or other external reference.
+
+  priority       Priority   @default(medium)
+  type           CaseType   @default(functional)
+  status         CaseStatus @default(draft)
+  component      String?
+  ownerName      String?
+  // Estimated execution time, in seconds (Zephyr's unit).
+  estimatedTime  Int?
+  tags           String[]   @default([])
+  // Linked/covered issue keys (Zephyr "Coverage (Issues)").
+  coverage       String[]   @default([])
+  // Optional single Jira issue key or other external reference.
   externalRef    String?
+  // Lossless bag for source custom fields (Language, POD, Remarks, etc.).
+  customFields   Json       @default("{}")
+
   createdById    String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
   suite      TestSuite       @relation(fields: [suiteId], references: [id], onDelete: Cascade)
   createdBy  User?           @relation("CaseCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
@@ -126,6 +160,7 @@ model TestCase {
 
   @@index([suiteId])
   @@index([tags])
+  @@index([status])
 }
 
 // ---------------------------------------------------------------------------

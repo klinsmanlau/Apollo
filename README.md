@@ -93,10 +93,28 @@ the enforcement layer here — authorization is done in Server Actions / queries
 (every project query is scoped to `members: { some: { userId } }`). If you later
 want defense-in-depth RLS, that's an additive step, not a rewrite.
 
+## Zephyr import
+
+Project detail page → **Import .xlsx** (`/projects/<id>/import`). Upload a
+**Zephyr Scale** test-case export (`.xlsx`) and it will:
+
+- Turn the `Folder` path (`/E2E/Rewards/Bonus Interest`) into **nested suites**
+- Map `Priority` (`High→high`, `Normal→medium`, …), `Status`, `Labels→tags`,
+  `Coverage (Issues)→coverage`
+- Reconstruct **step-by-step** scripts (Step / Test Data / Expected) from
+  Zephyr's packed numbered cells; import Plain Text / BDD scripts as-is
+- Store any **unrecognized columns** (Language, POD, Remarks, …) losslessly in
+  each case's `customFields`
+- Be **idempotent**: re-importing updates cases matched by their Zephyr `Key`
+  (`sourceKey`) instead of duplicating
+
+Parser: `src/lib/import/zephyr.ts` · action: `src/lib/actions/import.ts`.
+Uses `exceljs` to read the workbook server-side.
+
 ## Roadmap (from the spec)
 
-- **Phase 1 (this scaffold):** auth, projects, suites, case authoring ✅
-  - Next up in Phase 1: run creation, execution screen, dashboard, CSV import/export
+- **Phase 1 (this scaffold):** auth, projects, suites, case authoring, Zephyr .xlsx import ✅
+  - Next up in Phase 1: run creation, execution screen, dashboard, CSV export
 - **Phase 2:** Jira / GitHub issue linking, CI result webhook, Slack notifications
 - **Phase 3:** trend charts, saved views, attachments, flaky-test flag
 ```
