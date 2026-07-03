@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth";
 import { suiteSchema } from "@/lib/validation";
 
-export type FormState = { error?: string } | undefined;
+export type FormState = { error?: string; ok?: boolean } | undefined;
 
 export async function createSuite(
   _prev: FormState,
@@ -31,7 +31,7 @@ export async function createSuite(
   });
 
   revalidatePath(`/projects/${parsed.data.projectId}`);
-  return undefined;
+  return { ok: true };
 }
 
 export async function deleteSuite(formData: FormData): Promise<void> {

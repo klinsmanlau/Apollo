@@ -145,6 +145,9 @@ model TestCase {
   tags           String[]   @default([])
   // Linked/covered issue keys (Zephyr "Coverage (Issues)").
   coverage       String[]   @default([])
+  // Soft-archive: archived cases are hidden from the default list.
+  archived       Boolean    @default(false)
+  archivedAt     DateTime?
   // Optional single Jira issue key or other external reference.
   externalRef    String?
   // Lossless bag for source custom fields (Language, POD, Remarks, etc.).
@@ -161,6 +164,7 @@ model TestCase {
   @@index([suiteId])
   @@index([tags])
   @@index([status])
+  @@index([archived])
 }
 
 // ---------------------------------------------------------------------------
