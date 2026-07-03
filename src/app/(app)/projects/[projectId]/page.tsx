@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/auth";
 import { buildSuiteTree, flattenForSelect, type SuiteNode } from "@/lib/suites";
 import { PriorityBadge, TypeBadge } from "@/components/ui";
 import { NewSuiteForm } from "./new-suite-form";
+import { NewCaseModal } from "./new-case-modal";
 import { deleteSuite } from "@/lib/actions/suites";
 
 export default async function ProjectPage({
@@ -114,12 +115,7 @@ export default async function ProjectPage({
             Import .xlsx
           </Link>
           {suiteOptions.length > 0 && (
-            <Link
-              href={`/projects/${projectId}/cases/new`}
-              className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700"
-            >
-              + New test case
-            </Link>
+            <NewCaseModal projectId={projectId} suiteOptions={suiteOptions} />
           )}
         </div>
       </div>
