@@ -14,7 +14,7 @@ export default async function AppLayout({
   return (
     <div className="min-h-screen">
       <header className="themed sticky top-0 z-40 border-b border-line bg-surface/80 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-6">
+        <div className="mx-auto flex h-14 max-w-[1600px] items-center justify-between px-6">
           <div className="flex items-center gap-6">
             <Link href="/projects" className="text-lg font-semibold text-fg">
               Apollo
@@ -39,7 +39,7 @@ export default async function AppLayout({
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
+      <main className="mx-auto max-w-[1600px] px-6 py-8">{children}</main>
     </div>
   );
 }

@@ -7,10 +7,13 @@ import { ProjectWorkspace } from "./project-workspace";
 
 export default async function ProjectPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ projectId: string }>;
+  searchParams: Promise<{ folder?: string }>;
 }) {
   const { projectId } = await params;
+  const { folder } = await searchParams;
   const user = await requireUser();
 
   const project = await prisma.project.findFirst({
@@ -18,24 +21,31 @@ export default async function ProjectPage({
   });
   if (!project) notFound();
 
-  const [suites, cases] = await Promise.all([
+  const caseSelect = {
+    id: true,
+    title: true,
+    sourceKey: true,
+    priority: true,
+    type: true,
+    status: true,
+    suiteId: true,
+  } as const;
+
+  const [suites, cases, archivedCases] = await Promise.all([
     prisma.testSuite.findMany({
       where: { projectId },
       select: { id: true, name: true, parentSuiteId: true },
     }),
-    // Archived cases are hidden from the workspace.
+    // Active cases power the folder tree; archived are shown in their own view.
     prisma.testCase.findMany({
       where: { suite: { projectId }, archived: false },
-      select: {
-        id: true,
-        title: true,
-        sourceKey: true,
-        priority: true,
-        type: true,
-        status: true,
-        suiteId: true,
-      },
+      select: caseSelect,
       orderBy: { updatedAt: "desc" },
+    }),
+    prisma.testCase.findMany({
+      where: { suite: { projectId }, archived: true },
+      select: caseSelect,
+      orderBy: { archivedAt: "desc" },
     }),
   ]);
 
@@ -57,7 +67,13 @@ export default async function ProjectPage({
         <ImportModal projectId={projectId} />
       </div>
 
-      <ProjectWorkspace projectId={projectId} suites={suites} cases={cases} />
+      <ProjectWorkspace
+        projectId={projectId}
+        suites={suites}
+        cases={cases}
+        archivedCases={archivedCases}
+        initialFolder={folder ?? null}
+      />
     </div>
   );
 }

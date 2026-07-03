@@ -1,19 +1,19 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Priority, CaseType, CaseStatus } from "@prisma/client";
 import { PriorityBadge, TypeBadge } from "@/components/ui";
-import { Modal } from "@/components/modal";
 import { NewCaseModal } from "./new-case-modal";
-import { NewSuiteForm } from "./new-suite-form";
-import { deleteSuite } from "@/lib/actions/suites";
 import {
   moveCase,
   moveSuite,
   cloneCases,
   archiveCases,
+  addSuite,
+  renameSuite,
+  removeSuite,
 } from "@/lib/actions/workspace";
 
 export type WSuite = { id: string; name: string; parentSuiteId: string | null };
@@ -27,26 +27,78 @@ export type WCase = {
   suiteId: string;
 };
 
-type Drag =
-  | { kind: "case"; id: string }
-  | { kind: "suite"; id: string }
-  | null;
+type Drag = { kind: "case"; id: string } | { kind: "suite"; id: string } | null;
 
 const PAGE_SIZE = 50;
+const ARCHIVED = "__archived__";
+
+/** Inline text field for creating or renaming a folder. */
+function FolderInput({
+  initial = "",
+  depth = 0,
+  onSubmit,
+  onCancel,
+}: {
+  initial?: string;
+  depth?: number;
+  onSubmit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [v, setV] = useState(initial);
+  return (
+    <div
+      style={{ paddingLeft: `${depth * 14 + 6}px` }}
+      className="flex items-center gap-1 py-1"
+    >
+      <input
+        autoFocus
+        value={v}
+        onChange={(e) => setV(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && v.trim()) onSubmit(v.trim());
+          else if (e.key === "Escape") onCancel();
+        }}
+        onBlur={() => (v.trim() ? onSubmit(v.trim()) : onCancel())}
+        placeholder="Folder name"
+        className="field h-7 flex-1 px-2 py-0 text-xs"
+      />
+      <button
+        type="button"
+        // preventDefault so the input's blur doesn't fire before this click.
+        onMouseDown={(e) => {
+          e.preventDefault();
+          onCancel();
+        }}
+        className="shrink-0 rounded p-1 text-subtle hover:text-fg"
+        aria-label="Cancel"
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
 
 export function ProjectWorkspace({
   projectId,
   suites,
   cases,
+  archivedCases,
+  initialFolder,
 }: {
   projectId: string;
   suites: WSuite[];
   cases: WCase[];
+  archivedCases: WCase[];
+  initialFolder: string | null;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
-  const [selectedSuite, setSelectedSuite] = useState<string | null>(null); // null = all
+  const [selectedSuite, setSelectedSuite] = useState<string | null>(
+    initialFolder && suites.some((s) => s.id === initialFolder)
+      ? initialFolder
+      : null
+  );
   const [folderQuery, setFolderQuery] = useState("");
   const [caseQuery, setCaseQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -55,8 +107,15 @@ export function ProjectWorkspace({
   );
   const [page, setPage] = useState(0);
   const [dropTarget, setDropTarget] = useState<string | "root" | null>(null);
-  const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  // Inline folder creation: { parent } where parent null = top level.
+  const [creating, setCreating] = useState<{ parent: string | null } | null>(
+    null
+  );
+
+  const archivedView = selectedSuite === ARCHIVED;
 
   // ---- tree + descendant maps ------------------------------------------
   const childrenOf = useMemo(() => {
@@ -70,7 +129,6 @@ export function ProjectWorkspace({
     return m;
   }, [suites]);
 
-  // For each suite: the set of its own id + all descendant ids.
   const subtreeOf = useMemo(() => {
     const m = new Map<string, Set<string>>();
     const collect = (id: string): Set<string> => {
@@ -106,19 +164,20 @@ export function ProjectWorkspace({
 
   // ---- right-panel case list -------------------------------------------
   const visibleCases = useMemo(() => {
-    const inScope = selectedSuite
-      ? cases.filter((c) => subtreeOf.get(selectedSuite)?.has(c.suiteId))
-      : cases;
+    const source = archivedView
+      ? archivedCases
+      : selectedSuite
+        ? cases.filter((c) => subtreeOf.get(selectedSuite)?.has(c.suiteId))
+        : cases;
     const q = caseQuery.trim().toLowerCase();
-    const filtered = q
-      ? inScope.filter(
+    return q
+      ? source.filter(
           (c) =>
             c.title.toLowerCase().includes(q) ||
             (c.sourceKey ?? "").toLowerCase().includes(q)
         )
-      : inScope;
-    return filtered;
-  }, [cases, selectedSuite, subtreeOf, caseQuery]);
+      : source;
+  }, [cases, archivedCases, archivedView, selectedSuite, subtreeOf, caseQuery]);
 
   const pageCount = Math.max(1, Math.ceil(visibleCases.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
@@ -147,6 +206,12 @@ export function ProjectWorkspace({
     });
   }
 
+  function selectFolder(id: string | null) {
+    setSelectedSuite(id);
+    setPage(0);
+    setSelected(new Set());
+  }
+
   // ---- server ops ------------------------------------------------------
   function run(fn: () => Promise<unknown>) {
     startTransition(async () => {
@@ -159,9 +224,7 @@ export function ProjectWorkspace({
     if (!drag) return;
     if (drag.kind === "case") {
       const ids =
-        selected.has(drag.id) && selected.size > 1
-          ? [...selected]
-          : [drag.id];
+        selected.has(drag.id) && selected.size > 1 ? [...selected] : [drag.id];
       run(async () => {
         await Promise.all(ids.map((id) => moveCase(projectId, id, targetSuiteId)));
         setSelected(new Set());
@@ -169,6 +232,18 @@ export function ProjectWorkspace({
     } else if (drag.kind === "suite" && drag.id !== targetSuiteId) {
       run(() => moveSuite(projectId, drag.id, targetSuiteId));
     }
+  }
+
+  function expandSubtree(id: string, open: boolean) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      for (const d of subtreeOf.get(id) ?? [id]) {
+        if (open) next.add(d);
+        else if (d !== id) next.delete(d);
+      }
+      if (open) next.add(id);
+      return next;
+    });
   }
 
   const selectedIds = [...selected];
@@ -191,7 +266,14 @@ export function ProjectWorkspace({
     URL.revokeObjectURL(url);
   }
 
-  // ---- render helpers --------------------------------------------------
+  async function copy(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {}
+    setOpenMenu(null);
+  }
+
+  // ---- folder tree rendering ------------------------------------------
   const folderMatch = (s: WSuite) =>
     !folderQuery.trim() ||
     s.name.toLowerCase().includes(folderQuery.trim().toLowerCase());
@@ -201,8 +283,8 @@ export function ProjectWorkspace({
     const isSelected = selectedSuite === suite.id;
     const isDrop = dropTarget === suite.id;
     const open = expanded.has(suite.id);
+    const menuOpen = openMenu === suite.id;
 
-    // When searching, keep a folder if it or any descendant matches.
     const subtreeMatch =
       folderMatch(suite) ||
       [...(subtreeOf.get(suite.id) ?? [])].some((id) => {
@@ -213,83 +295,111 @@ export function ProjectWorkspace({
 
     return (
       <li>
-        <div
-          draggable
-          onDragStart={(e) => {
-            // Stop the event bubbling to ancestor folders, whose handlers would
-            // otherwise overwrite dataTransfer with their own id.
-            e.stopPropagation();
-            e.dataTransfer.setData(
-              "application/json",
-              JSON.stringify({ kind: "suite", id: suite.id })
-            );
-            e.dataTransfer.effectAllowed = "move";
-          }}
-          onDragOver={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setDropTarget(suite.id);
-          }}
-          onDragLeave={() => setDropTarget((d) => (d === suite.id ? null : d))}
-          onDrop={(e) => {
-            e.preventDefault();
-            // Only the innermost folder should handle the drop.
-            e.stopPropagation();
-            setDropTarget(null);
-            try {
-              onDropOnSuite(suite.id, JSON.parse(e.dataTransfer.getData("application/json")));
-            } catch {}
-          }}
-          onClick={() => {
-            setSelectedSuite(suite.id);
-            setPage(0);
-          }}
-          style={{ paddingLeft: `${depth * 14 + 6}px` }}
-          className={`group flex cursor-pointer items-center gap-1 rounded-md py-1.5 pr-2 text-sm transition-colors ${
-            isSelected
-              ? "bg-primary/10 text-fg"
-              : "text-muted hover:bg-surface-muted hover:text-fg"
-          } ${isDrop ? "ring-2 ring-ring ring-inset" : ""}`}
-        >
-          {kids.length > 0 ? (
+        {renaming === suite.id ? (
+          <FolderInput
+            initial={suite.name}
+            depth={depth}
+            onSubmit={(name) =>
+              run(async () => {
+                await renameSuite(projectId, suite.id, name);
+                setRenaming(null);
+              })
+            }
+            onCancel={() => setRenaming(null)}
+          />
+        ) : (
+          <div
+            draggable
+            onDragStart={(e) => {
+              e.stopPropagation();
+              e.dataTransfer.setData(
+                "application/json",
+                JSON.stringify({ kind: "suite", id: suite.id })
+              );
+              e.dataTransfer.effectAllowed = "move";
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDropTarget(suite.id);
+            }}
+            onDragLeave={() => setDropTarget((d) => (d === suite.id ? null : d))}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDropTarget(null);
+              try {
+                onDropOnSuite(
+                  suite.id,
+                  JSON.parse(e.dataTransfer.getData("application/json"))
+                );
+              } catch {}
+            }}
+            onClick={() => selectFolder(suite.id)}
+            style={{ paddingLeft: `${depth * 14 + 6}px` }}
+            className={`group relative flex cursor-pointer items-center gap-1 rounded-md py-1.5 pr-1 text-sm transition-colors ${
+              isSelected
+                ? "bg-primary/10 text-fg"
+                : "text-muted hover:bg-surface-muted hover:text-fg"
+            } ${isDrop ? "ring-2 ring-ring ring-inset" : ""}`}
+          >
+            {kids.length > 0 ? (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpanded((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(suite.id)) next.delete(suite.id);
+                    else next.add(suite.id);
+                    return next;
+                  });
+                }}
+                className="w-4 shrink-0 text-subtle"
+              >
+                {open ? "▾" : "▸"}
+              </button>
+            ) : (
+              <span className="w-4 shrink-0 text-center text-subtle">•</span>
+            )}
+            <span className="truncate">{suite.name}</span>
+            <span className="ml-auto shrink-0 text-xs text-subtle group-hover:hidden">
+              {countFor(suite.id)}
+            </span>
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                setExpanded((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(suite.id)) next.delete(suite.id);
-                  else next.add(suite.id);
-                  return next;
-                });
+                setOpenMenu(menuOpen ? null : suite.id);
               }}
-              className="w-4 shrink-0 text-subtle"
+              className={`ml-auto hidden h-6 w-6 shrink-0 items-center justify-center rounded text-subtle hover:bg-surface hover:text-fg group-hover:flex ${
+                menuOpen ? "!flex bg-surface text-fg" : ""
+              }`}
+              aria-label="Folder options"
             >
-              {open ? "▾" : "▸"}
+              ⋯
             </button>
-          ) : (
-            <span className="w-4 shrink-0" />
-          )}
-          <span className="truncate">📁 {suite.name}</span>
-          <span className="ml-auto shrink-0 text-xs text-subtle">
-            {countFor(suite.id)}
-          </span>
-          <form
-            action={deleteSuite}
-            onClick={(e) => e.stopPropagation()}
-            className="shrink-0"
-          >
-            <input type="hidden" name="id" value={suite.id} />
-            <input type="hidden" name="projectId" value={projectId} />
-            <button
-              className="text-xs text-subtle opacity-0 transition-opacity hover:text-red-500 group-hover:opacity-100"
-              title="Delete folder"
-            >
-              ✕
-            </button>
-          </form>
-        </div>
-        {open && kids.length > 0 && (
+
+            {menuOpen && (
+              <FolderMenu suite={suite} depth={depth} />
+            )}
+          </div>
+        )}
+
+        {open && (creating?.parent === suite.id || kids.length > 0) && (
           <ul>
+            {creating?.parent === suite.id && (
+              <li>
+                <FolderInput
+                  depth={depth + 1}
+                  onSubmit={(name) =>
+                    run(async () => {
+                      await addSuite(projectId, name, suite.id);
+                      setCreating(null);
+                    })
+                  }
+                  onCancel={() => setCreating(null)}
+                />
+              </li>
+            )}
             {kids.map((k) => (
               <FolderNode key={k.id} suite={k} depth={depth + 1} />
             ))}
@@ -299,38 +409,146 @@ export function ProjectWorkspace({
     );
   }
 
+  function FolderMenu({ suite }: { suite: WSuite; depth: number }) {
+    const Item = ({
+      onClick,
+      children,
+      disabled,
+    }: {
+      onClick?: () => void;
+      children: React.ReactNode;
+      disabled?: boolean;
+    }) => (
+      <button
+        disabled={disabled}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick?.();
+        }}
+        className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-muted disabled:opacity-40 disabled:hover:bg-transparent"
+      >
+        {children}
+      </button>
+    );
+    const Divider = () => <div className="my-1 border-t border-line" />;
+
+    return (
+      <>
+        {/* click-away backdrop */}
+        <div
+          className="fixed inset-0 z-20"
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpenMenu(null);
+          }}
+        />
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute right-1 top-8 z-30 w-52 overflow-hidden rounded-lg border border-line bg-surface py-1 shadow-xl"
+        >
+          <Item
+            onClick={() => {
+              setExpanded((p) => new Set(p).add(suite.id));
+              setCreating({ parent: suite.id });
+              setOpenMenu(null);
+            }}
+          >
+            Add subfolder
+          </Item>
+          <Item
+            onClick={() => {
+              setRenaming(suite.id);
+              setOpenMenu(null);
+            }}
+          >
+            Rename
+          </Item>
+          <Item
+            onClick={() => {
+              setOpenMenu(null);
+              if (
+                confirm(
+                  `Delete “${suite.name}” and all its subfolders and cases?`
+                )
+              ) {
+                run(() => removeSuite(projectId, suite.id));
+              }
+            }}
+          >
+            Delete
+          </Item>
+          <Divider />
+          <Item
+            onClick={() => {
+              expandSubtree(suite.id, true);
+              setOpenMenu(null);
+            }}
+          >
+            Expand all
+          </Item>
+          <Item
+            onClick={() => {
+              expandSubtree(suite.id, false);
+              setOpenMenu(null);
+            }}
+          >
+            Collapse all
+          </Item>
+          <Divider />
+          <Item disabled>Create test cycle (Phase 2)</Item>
+          <Divider />
+          <Item onClick={() => copy(suite.id)}>
+            <span className="text-muted">ID</span>
+            <span className="truncate font-mono text-xs text-subtle">
+              {suite.id.slice(0, 8)}…
+            </span>
+          </Item>
+          <Item
+            onClick={() =>
+              copy(
+                `${window.location.origin}/projects/${projectId}?folder=${suite.id}`
+              )
+            }
+          >
+            Copy folder link
+          </Item>
+        </div>
+      </>
+    );
+  }
+
   const roots = childrenOf.get(null) ?? [];
-  const scopeName = selectedSuite
-    ? suites.find((s) => s.id === selectedSuite)?.name ?? "Folder"
-    : "All test cases";
+  const scopeName = archivedView
+    ? "Archived test cases"
+    : selectedSuite
+      ? suites.find((s) => s.id === selectedSuite)?.name ?? "Folder"
+      : "All test cases";
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
+    <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
       {/* ---------------- Left panel ---------------- */}
       <aside className="card animate-fade flex max-h-[calc(100vh-8rem)] flex-col p-3">
         <div className="mb-2 flex items-center gap-2">
+          <button
+            onClick={() => {
+              setCreating({ parent: null });
+            }}
+            className="h-8 flex-1 rounded-md bg-primary px-2 text-xs font-medium text-primary-fg transition-all hover:opacity-90 active:scale-95"
+          >
+            + New Folder
+          </button>
           <input
             value={folderQuery}
             onChange={(e) => setFolderQuery(e.target.value)}
-            placeholder="Search folders…"
-            className="field h-8 flex-1 px-2 py-1 text-xs"
+            placeholder="Search…"
+            className="field h-8 w-28 px-2 py-1 text-xs"
           />
-          <button
-            onClick={() => setNewFolderOpen(true)}
-            className="h-8 shrink-0 rounded-md bg-primary px-2 text-xs font-medium text-primary-fg transition-all hover:opacity-90 active:scale-95"
-            title="New folder"
-          >
-            + Folder
-          </button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           {/* All test cases + top-level drop target (un-nest) */}
           <div
-            onClick={() => {
-              setSelectedSuite(null);
-              setPage(0);
-            }}
+            onClick={() => selectFolder(null)}
             onDragOver={(e) => {
               e.preventDefault();
               setDropTarget("root");
@@ -344,14 +562,16 @@ export function ProjectWorkspace({
                 if (d.kind === "suite") run(() => moveSuite(projectId, d.id, null));
               } catch {}
             }}
-            className={`flex cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-sm font-medium transition-colors ${
+            className={`flex cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-sm font-semibold transition-colors ${
               selectedSuite === null
                 ? "bg-primary/10 text-fg"
-                : "text-muted hover:bg-surface-muted hover:text-fg"
+                : "text-fg hover:bg-surface-muted"
             } ${dropTarget === "root" ? "ring-2 ring-ring ring-inset" : ""}`}
           >
             <span>All test cases</span>
-            <span className="text-xs text-subtle">{cases.length}</span>
+            <span className="text-xs font-normal text-subtle">
+              {cases.length}
+            </span>
           </div>
 
           <ul className="mt-1">
@@ -359,11 +579,40 @@ export function ProjectWorkspace({
               <FolderNode key={s.id} suite={s} depth={0} />
             ))}
           </ul>
-          {roots.length === 0 && (
+
+          {/* top-level inline create */}
+          {creating?.parent === null && (
+            <FolderInput
+              onSubmit={(name) =>
+                run(async () => {
+                  await addSuite(projectId, name, null);
+                  setCreating(null);
+                })
+              }
+              onCancel={() => setCreating(null)}
+            />
+          )}
+
+          {roots.length === 0 && !creating && (
             <p className="px-2 py-3 text-xs text-subtle">
               No folders yet. Create one to start.
             </p>
           )}
+        </div>
+
+        {/* Archived */}
+        <div className="mt-2 border-t border-line pt-2">
+          <div
+            onClick={() => selectFolder(ARCHIVED)}
+            className={`flex cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors ${
+              archivedView
+                ? "bg-primary/10 text-fg"
+                : "text-muted hover:bg-surface-muted hover:text-fg"
+            }`}
+          >
+            <span>🗄 Archived test cases</span>
+            <span className="text-xs text-subtle">{archivedCases.length}</span>
+          </div>
         </div>
       </aside>
 
@@ -387,42 +636,60 @@ export function ProjectWorkspace({
             placeholder="Search cases…"
             className="field h-8 w-44 px-2 py-1 text-xs"
           />
-          <NewCaseModal
-            projectId={projectId}
-            suiteOptions={suites
-              .slice()
-              .sort((a, b) => a.name.localeCompare(b.name))
-              .map((s) => ({ id: s.id, label: s.name }))}
-            defaultSuiteId={selectedSuite ?? undefined}
-          />
+          {!archivedView && (
+            <NewCaseModal
+              projectId={projectId}
+              suiteOptions={suites
+                .slice()
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map((s) => ({ id: s.id, label: s.name }))}
+              defaultSuiteId={selectedSuite ?? undefined}
+            />
+          )}
         </div>
 
         {/* Selection action bar */}
         {selected.size > 0 && (
           <div className="flex items-center gap-2 border-b border-line bg-surface-muted px-3 py-2 text-sm">
             <span className="font-medium text-fg">{selected.size} selected</span>
-            <button
-              onClick={() =>
-                run(async () => {
-                  await cloneCases(projectId, selectedIds);
-                  setSelected(new Set());
-                })
-              }
-              className="rounded-md border border-line bg-surface px-2.5 py-1 text-xs font-medium text-fg transition-colors hover:bg-surface-muted"
-            >
-              Clone
-            </button>
-            <button
-              onClick={() =>
-                run(async () => {
-                  await archiveCases(projectId, selectedIds, true);
-                  setSelected(new Set());
-                })
-              }
-              className="rounded-md border border-line bg-surface px-2.5 py-1 text-xs font-medium text-fg transition-colors hover:bg-surface-muted"
-            >
-              Archive
-            </button>
+            {archivedView ? (
+              <button
+                onClick={() =>
+                  run(async () => {
+                    await archiveCases(projectId, selectedIds, false);
+                    setSelected(new Set());
+                  })
+                }
+                className="rounded-md border border-line bg-surface px-2.5 py-1 text-xs font-medium text-fg transition-colors hover:bg-surface-muted"
+              >
+                Restore
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={() =>
+                    run(async () => {
+                      await cloneCases(projectId, selectedIds);
+                      setSelected(new Set());
+                    })
+                  }
+                  className="rounded-md border border-line bg-surface px-2.5 py-1 text-xs font-medium text-fg transition-colors hover:bg-surface-muted"
+                >
+                  Clone
+                </button>
+                <button
+                  onClick={() =>
+                    run(async () => {
+                      await archiveCases(projectId, selectedIds, true);
+                      setSelected(new Set());
+                    })
+                  }
+                  className="rounded-md border border-line bg-surface px-2.5 py-1 text-xs font-medium text-fg transition-colors hover:bg-surface-muted"
+                >
+                  Archive
+                </button>
+              </>
+            )}
             <div className="relative">
               <button
                 onClick={() => setExportOpen((o) => !o)}
@@ -460,10 +727,11 @@ export function ProjectWorkspace({
         <div className="min-h-0 flex-1 overflow-auto">
           {visibleCases.length === 0 ? (
             <p className="p-6 text-sm text-subtle">
-              No test cases here.{" "}
-              {selectedSuite
-                ? "Add one with “New test case”."
-                : "Select a folder or create a case."}
+              {archivedView
+                ? "No archived test cases."
+                : selectedSuite
+                  ? "No test cases here. Add one with “New test case”."
+                  : "No test cases yet."}
             </p>
           ) : (
             <table className="w-full text-sm">
@@ -488,7 +756,7 @@ export function ProjectWorkspace({
                 {pageCases.map((c) => (
                   <tr
                     key={c.id}
-                    draggable
+                    draggable={!archivedView}
                     onDragStart={(e) => {
                       e.dataTransfer.setData(
                         "application/json",
@@ -569,23 +837,6 @@ export function ProjectWorkspace({
           </div>
         )}
       </section>
-
-      {/* New folder modal */}
-      <Modal
-        open={newFolderOpen}
-        onClose={() => setNewFolderOpen(false)}
-        title="New folder"
-      >
-        <NewSuiteForm
-          projectId={projectId}
-          suiteOptions={suites
-            .slice()
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .map((s) => ({ id: s.id, label: s.name }))}
-          defaultParentId={selectedSuite ?? undefined}
-          onCreated={() => setNewFolderOpen(false)}
-        />
-      </Modal>
     </div>
   );
 }
