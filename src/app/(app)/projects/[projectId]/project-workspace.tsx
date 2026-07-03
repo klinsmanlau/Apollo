@@ -216,6 +216,9 @@ export function ProjectWorkspace({
         <div
           draggable
           onDragStart={(e) => {
+            // Stop the event bubbling to ancestor folders, whose handlers would
+            // otherwise overwrite dataTransfer with their own id.
+            e.stopPropagation();
             e.dataTransfer.setData(
               "application/json",
               JSON.stringify({ kind: "suite", id: suite.id })
@@ -224,11 +227,14 @@ export function ProjectWorkspace({
           }}
           onDragOver={(e) => {
             e.preventDefault();
+            e.stopPropagation();
             setDropTarget(suite.id);
           }}
           onDragLeave={() => setDropTarget((d) => (d === suite.id ? null : d))}
           onDrop={(e) => {
             e.preventDefault();
+            // Only the innermost folder should handle the drop.
+            e.stopPropagation();
             setDropTarget(null);
             try {
               onDropOnSuite(suite.id, JSON.parse(e.dataTransfer.getData("application/json")));
