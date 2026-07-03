@@ -41,7 +41,7 @@ export function NewCaseModal({
 
       {open && (
         <div
-          className="animate-overlay fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 backdrop-blur-sm sm:p-8"
+          className="animate-overlay fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-4 backdrop-blur-sm sm:p-6"
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) setOpen(false);
           }}
