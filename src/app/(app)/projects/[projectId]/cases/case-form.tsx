@@ -38,8 +38,7 @@ const TYPES = [
   "usability",
 ];
 
-const inputClass =
-  "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none";
+const inputClass = "field";
 
 /** Reusable chip-list editor for tags / coverage. */
 function ChipInput({
@@ -62,13 +61,13 @@ function ChipInput({
       {values.map((t) => (
         <span
           key={t}
-          className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700"
+          className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300"
         >
           {t}
           <button
             type="button"
             onClick={() => onChange(values.filter((x) => x !== t))}
-            className="text-indigo-400 hover:text-indigo-700"
+            className="text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-200"
           >
             ✕
           </button>
@@ -85,7 +84,7 @@ function ChipInput({
         }}
         onBlur={commit}
         placeholder={placeholder}
-        className="w-40 rounded-md border border-gray-300 px-2 py-1 text-xs focus:border-gray-500 focus:outline-none"
+        className="field w-40 px-2 py-1 text-xs"
       />
     </div>
   );
@@ -144,7 +143,7 @@ export function CaseForm({
 
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="sm:col-span-2 block text-sm">
-          <span className="mb-1 block font-medium text-gray-700">Title *</span>
+          <span className="mb-1 block font-medium text-fg">Title *</span>
           <input
             name="title"
             required
@@ -155,7 +154,7 @@ export function CaseForm({
         </label>
 
         <label className="block text-sm">
-          <span className="mb-1 block font-medium text-gray-700">Suite *</span>
+          <span className="mb-1 block font-medium text-fg">Suite *</span>
           <select
             name="suiteId"
             required
@@ -174,7 +173,7 @@ export function CaseForm({
         </label>
 
         <label className="block text-sm">
-          <span className="mb-1 block font-medium text-gray-700">Status</span>
+          <span className="mb-1 block font-medium text-fg">Status</span>
           <select
             name="status"
             defaultValue={initial?.status ?? "draft"}
@@ -189,7 +188,7 @@ export function CaseForm({
         </label>
 
         <label className="block text-sm">
-          <span className="mb-1 block font-medium text-gray-700">Priority</span>
+          <span className="mb-1 block font-medium text-fg">Priority</span>
           <select
             name="priority"
             defaultValue={initial?.priority ?? "medium"}
@@ -204,7 +203,7 @@ export function CaseForm({
         </label>
 
         <label className="block text-sm">
-          <span className="mb-1 block font-medium text-gray-700">Type</span>
+          <span className="mb-1 block font-medium text-fg">Type</span>
           <select
             name="type"
             defaultValue={initial?.type ?? "functional"}
@@ -219,7 +218,7 @@ export function CaseForm({
         </label>
 
         <label className="block text-sm">
-          <span className="mb-1 block font-medium text-gray-700">Component</span>
+          <span className="mb-1 block font-medium text-fg">Component</span>
           <input
             name="component"
             defaultValue={initial?.component ?? ""}
@@ -228,7 +227,7 @@ export function CaseForm({
         </label>
 
         <label className="block text-sm">
-          <span className="mb-1 block font-medium text-gray-700">Owner</span>
+          <span className="mb-1 block font-medium text-fg">Owner</span>
           <input
             name="ownerName"
             defaultValue={initial?.ownerName ?? ""}
@@ -237,7 +236,7 @@ export function CaseForm({
         </label>
 
         <label className="block text-sm">
-          <span className="mb-1 block font-medium text-gray-700">
+          <span className="mb-1 block font-medium text-fg">
             Estimated time (seconds)
           </span>
           <input
@@ -250,7 +249,7 @@ export function CaseForm({
         </label>
 
         <label className="block text-sm">
-          <span className="mb-1 block font-medium text-gray-700">
+          <span className="mb-1 block font-medium text-fg">
             External ref
           </span>
           <input
@@ -263,7 +262,7 @@ export function CaseForm({
       </div>
 
       <label className="block text-sm">
-        <span className="mb-1 block font-medium text-gray-700">Objective</span>
+        <span className="mb-1 block font-medium text-fg">Objective</span>
         <textarea
           name="objective"
           rows={2}
@@ -274,7 +273,7 @@ export function CaseForm({
       </label>
 
       <label className="block text-sm">
-        <span className="mb-1 block font-medium text-gray-700">
+        <span className="mb-1 block font-medium text-fg">
           Preconditions
         </span>
         <textarea
@@ -288,7 +287,7 @@ export function CaseForm({
 
       {/* Script type switch */}
       <label className="block text-sm">
-        <span className="mb-1 block font-medium text-gray-700">Script type</span>
+        <span className="mb-1 block font-medium text-fg">Script type</span>
         <select
           name="scriptType"
           value={scriptType}
@@ -305,7 +304,7 @@ export function CaseForm({
 
       {scriptType === "steps" ? (
         <div className="text-sm">
-          <span className="mb-2 block font-medium text-gray-700">Steps</span>
+          <span className="mb-2 block font-medium text-fg">Steps</span>
           <div className="space-y-2">
             {steps.map((s, i) => (
               <div
@@ -339,7 +338,7 @@ export function CaseForm({
                 <button
                   type="button"
                   onClick={() => removeStep(i)}
-                  className="mt-1.5 px-2 text-gray-400 hover:text-red-600"
+                  className="mt-1.5 px-2 text-subtle transition-colors hover:text-red-500"
                   title="Remove step"
                 >
                   ✕
@@ -350,14 +349,14 @@ export function CaseForm({
           <button
             type="button"
             onClick={addStep}
-            className="mt-2 text-sm font-medium text-indigo-600 hover:text-indigo-800"
+            className="mt-2 text-sm font-medium text-indigo-600 transition-colors hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
           >
             + Add step
           </button>
         </div>
       ) : (
         <label className="block text-sm">
-          <span className="mb-1 block font-medium text-gray-700">
+          <span className="mb-1 block font-medium text-fg">
             {scriptType === "bdd" ? "BDD script (Gherkin)" : "Plain-text script"}
           </span>
           <textarea
@@ -375,7 +374,7 @@ export function CaseForm({
       )}
 
       <label className="block text-sm">
-        <span className="mb-1 block font-medium text-gray-700">
+        <span className="mb-1 block font-medium text-fg">
           Overall expected result
         </span>
         <textarea
@@ -389,7 +388,7 @@ export function CaseForm({
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="text-sm">
-          <span className="mb-1 block font-medium text-gray-700">Tags</span>
+          <span className="mb-1 block font-medium text-fg">Tags</span>
           <ChipInput
             values={tags}
             onChange={setTags}
@@ -397,7 +396,7 @@ export function CaseForm({
           />
         </div>
         <div className="text-sm">
-          <span className="mb-1 block font-medium text-gray-700">
+          <span className="mb-1 block font-medium text-fg">
             Coverage (issue keys)
           </span>
           <ChipInput
@@ -408,7 +407,7 @@ export function CaseForm({
         </div>
       </div>
 
-      {state?.error && <p className="text-sm text-red-600">{state.error}</p>}
+      {state?.error && <p className="text-sm text-red-500">{state.error}</p>}
 
       <div className="flex gap-3">
         <SubmitButton>{submitLabel}</SubmitButton>

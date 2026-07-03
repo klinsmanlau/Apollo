@@ -1,13 +1,144 @@
 @import "tailwindcss";
 
+/* Enable class-based dark mode: `dark:` and tokens flip under `.dark`. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Semantic color tokens — one set per theme. Components reference these via
+   `bg-surface`, `text-fg`, `border-line`, etc. so they adapt automatically. */
 :root {
-  --background: #f7f8fa;
-  --foreground: #171923;
+  --app-bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-muted: #f3f4f6;
+  --fg: #111726;
+  --muted: #5b6472;
+  --subtle: #98a2b3;
+  --line: #e6e8ec;
+  --primary: #16181d;
+  --primary-fg: #ffffff;
+  --ring: #6366f1;
+}
+
+.dark {
+  --app-bg: #0a0c11;
+  --surface: #14171f;
+  --surface-muted: #1b1f28;
+  --fg: #e7e9ee;
+  --muted: #9aa3b2;
+  --subtle: #6b7482;
+  --line: #262b36;
+  --primary: #e7e9ee;
+  --primary-fg: #14171f;
+  --ring: #818cf8;
+}
+
+html {
+  color-scheme: light;
+}
+html.dark {
+  color-scheme: dark;
+}
+
+/* Expose tokens to Tailwind as first-class color utilities (inline = emit the
+   var() directly, so overriding the var under .dark restyles everything). */
+@theme inline {
+  --color-app-bg: var(--app-bg);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-line: var(--line);
+  --color-primary: var(--primary);
+  --color-primary-fg: var(--primary-fg);
+  --color-ring: var(--ring);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--app-bg);
+  color: var(--fg);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     Helvetica, Arial, sans-serif;
+}
+
+/* Gentle cross-fade when the theme flips. */
+body,
+.themed {
+  transition: background-color 0.25s ease, border-color 0.25s ease,
+    color 0.25s ease;
+}
+
+/* Reusable surfaces so every form/card stays consistent across themes. */
+@layer components {
+  .field {
+    @apply w-full rounded-md border border-line bg-surface px-3 py-2 text-sm text-fg placeholder:text-subtle transition-colors focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30;
+  }
+  .card {
+    @apply rounded-xl border border-line bg-surface;
+    transition: background-color 0.25s ease, border-color 0.25s ease,
+      color 0.25s ease;
+  }
+}
+
+/* ---- Animations ---------------------------------------------------------- */
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-overlay {
+  animation: overlay-in 0.18s ease-out;
+}
+.animate-modal {
+  animation: modal-in 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.animate-rise {
+  animation: rise-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.animate-fade {
+  animation: fade-in 0.35s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-overlay,
+  .animate-modal,
+  .animate-rise,
+  .animate-fade {
+    animation: none;
+  }
+  body,
+  .themed {
+    transition: none;
+  }
 }

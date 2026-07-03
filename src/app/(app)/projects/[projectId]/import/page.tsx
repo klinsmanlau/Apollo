@@ -18,21 +18,23 @@ export default async function ImportPage({
   if (!project) notFound();
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <div className="animate-fade mx-auto max-w-2xl space-y-6">
       <div>
         <Link
           href={`/projects/${projectId}`}
-          className="text-sm text-gray-400 hover:text-gray-600"
+          className="text-sm text-subtle transition-colors hover:text-fg"
         >
           ← {project.name}
         </Link>
-        <h1 className="mt-1 text-2xl font-bold">Import from Zephyr</h1>
-        <p className="mt-1 text-sm text-gray-500">
+        <h1 className="mt-1 text-2xl font-bold text-fg">Import from Zephyr</h1>
+        <p className="mt-1 text-sm text-muted">
           Upload a Zephyr Scale test-case export to populate this project&apos;s
           suites and cases.
         </p>
       </div>
-      <ImportForm projectId={projectId} />
+      <div className="card p-5">
+        <ImportForm projectId={projectId} />
+      </div>
     </div>
   );
 }

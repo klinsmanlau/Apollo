@@ -15,32 +15,36 @@ export default async function ProjectsPage() {
   });
 
   return (
-    <div className="space-y-8">
+    <div className="animate-fade space-y-8">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Projects</h1>
+        <h1 className="text-2xl font-bold text-fg">Projects</h1>
       </div>
 
       <NewProjectForm />
 
       {projects.length === 0 ? (
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-muted">
           No projects yet. Create your first one above.
         </p>
       ) : (
         <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {projects.map((p) => (
-            <li key={p.id}>
+          {projects.map((p, i) => (
+            <li
+              key={p.id}
+              className="animate-rise"
+              style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
+            >
               <Link
                 href={`/projects/${p.id}`}
-                className="block rounded-lg border border-gray-200 bg-white p-4 transition hover:border-gray-300 hover:shadow-sm"
+                className="themed block rounded-xl border border-line bg-surface p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-ring/40 hover:shadow-lg hover:shadow-black/5"
               >
-                <h2 className="font-semibold">{p.name}</h2>
+                <h2 className="font-semibold text-fg">{p.name}</h2>
                 {p.description && (
-                  <p className="mt-1 line-clamp-2 text-sm text-gray-500">
+                  <p className="mt-1 line-clamp-2 text-sm text-muted">
                     {p.description}
                   </p>
                 )}
-                <p className="mt-3 text-xs text-gray-400">
+                <p className="mt-3 text-xs text-subtle">
                   {p._count.suites} suites · {p._count.runs} runs
                 </p>
               </Link>

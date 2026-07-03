@@ -32,15 +32,15 @@ export default async function EditCasePage({
   const suiteOptions = flattenForSelect(buildSuiteTree(suites));
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="animate-fade mx-auto max-w-3xl space-y-6">
       <div>
         <Link
           href={`/projects/${projectId}/cases/${caseId}`}
-          className="text-sm text-gray-400 hover:text-gray-600"
+          className="text-sm text-subtle transition-colors hover:text-fg"
         >
           ← Back to case
         </Link>
-        <h1 className="mt-1 text-2xl font-bold">Edit test case</h1>
+        <h1 className="mt-1 text-2xl font-bold text-fg">Edit test case</h1>
       </div>
       <CaseForm
         action={updateCase}

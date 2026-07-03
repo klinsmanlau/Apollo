@@ -1,21 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createCase } from "@/lib/actions/cases";
-import { CaseForm } from "./cases/case-form";
+import { useRouter } from "next/navigation";
+import { ImportForm } from "./import/import-form";
 
-export function NewCaseModal({
-  projectId,
-  suiteOptions,
-  defaultSuiteId,
-}: {
-  projectId: string;
-  suiteOptions: { id: string; label: string }[];
-  defaultSuiteId?: string;
-}) {
+export function ImportModal({ projectId }: { projectId: string }) {
   const [open, setOpen] = useState(false);
+  const router = useRouter();
 
-  // Close on Escape and lock background scroll while open.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -30,30 +22,43 @@ export function NewCaseModal({
     };
   }, [open]);
 
+  // Pull fresh suites/cases into the page after an import, then close.
+  function close() {
+    setOpen(false);
+    router.refresh();
+  }
+
   return (
     <>
       <button
         onClick={() => setOpen(true)}
-        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-fg transition-all hover:opacity-90 active:scale-[0.98]"
+        className="rounded-md border border-line bg-surface px-4 py-2 text-sm font-medium text-fg transition-colors hover:bg-surface-muted"
       >
-        + New test case
+        Import from Excel
       </button>
 
       {open && (
         <div
           className="animate-overlay fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 backdrop-blur-sm sm:p-8"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setOpen(false);
+            if (e.target === e.currentTarget) close();
           }}
           role="dialog"
           aria-modal="true"
-          aria-label="Create test case"
+          aria-label="Import from Zephyr"
         >
-          <div className="animate-modal w-full max-w-3xl rounded-xl border border-line bg-surface shadow-2xl shadow-black/20">
+          <div className="animate-modal w-full max-w-lg rounded-xl border border-line bg-surface shadow-2xl shadow-black/20">
             <div className="flex items-center justify-between border-b border-line px-6 py-4">
-              <h2 className="text-lg font-semibold text-fg">Create test case</h2>
+              <div>
+                <h2 className="text-lg font-semibold text-fg">
+                  Import from Zephyr
+                </h2>
+                <p className="text-xs text-muted">
+                  Upload a Zephyr Scale export to populate suites and cases.
+                </p>
+              </div>
               <button
-                onClick={() => setOpen(false)}
+                onClick={close}
                 aria-label="Close"
                 className="rounded-md p-1 text-subtle transition-colors hover:bg-surface-muted hover:text-fg"
               >
@@ -61,13 +66,7 @@ export function NewCaseModal({
               </button>
             </div>
             <div className="max-h-[78vh] overflow-y-auto px-6 py-5">
-              <CaseForm
-                action={createCase}
-                projectId={projectId}
-                suiteOptions={suiteOptions}
-                initial={{ suiteId: defaultSuiteId ?? "" }}
-                submitLabel="Create test case"
-              />
+              <ImportForm projectId={projectId} onDone={close} />
             </div>
           </div>
         </div>

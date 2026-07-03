@@ -17,23 +17,16 @@ export function NewSuiteForm({
   );
 
   return (
-    <form
-      action={formAction}
-      className="space-y-3 rounded-lg border border-gray-200 bg-white p-4"
-    >
-      <h2 className="text-sm font-semibold text-gray-700">New suite</h2>
+    <form action={formAction} className="card space-y-3 p-4">
+      <h2 className="text-sm font-semibold text-muted">New suite</h2>
       <input type="hidden" name="projectId" value={projectId} />
       <input
         name="name"
         placeholder="Suite name"
         required
-        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none"
+        className="field"
       />
-      <select
-        name="parentSuiteId"
-        defaultValue=""
-        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-500 focus:outline-none"
-      >
+      <select name="parentSuiteId" defaultValue="" className="field">
         <option value="">— Top level —</option>
         {suiteOptions.map((o) => (
           <option key={o.id} value={o.id}>
@@ -44,7 +37,7 @@ export function NewSuiteForm({
       <SubmitButton className="w-full" pendingText="Adding…">
         Add suite
       </SubmitButton>
-      {state?.error && <p className="text-sm text-red-600">{state.error}</p>}
+      {state?.error && <p className="text-sm text-red-500">{state.error}</p>}
     </form>
   );
 }
