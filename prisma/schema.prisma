@@ -1,0 +1,198 @@
+// Apollo TCM — Prisma schema
+// Data model per the build spec. Postgres (Supabase); identity via Clerk.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Users & membership
+// ---------------------------------------------------------------------------
+
+enum Role {
+  admin
+  lead
+  tester
+  viewer
+}
+
+model User {
+  id          String   @id @default(cuid())
+  // Clerk's user id (e.g. "user_2abc..."). Kept in sync via the Clerk webhook.
+  clerkUserId String   @unique
+  email       String   @unique
+  name        String?
+  role        Role     @default(tester)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  memberships    ProjectMember[]
+  createdCases   TestCase[]      @relation("CaseCreatedBy")
+  executions     TestExecution[] @relation("ExecutedBy")
+
+  @@index([email])
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members ProjectMember[]
+  suites  TestSuite[]
+  runs    TestRun[]
+}
+
+// Join table: User <-> Project (many-to-many) with a per-project role hook.
+model ProjectMember {
+  id        String   @id @default(cuid())
+  projectId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Suites (nestable folders) & Test Cases
+// ---------------------------------------------------------------------------
+
+model TestSuite {
+  id            String   @id @default(cuid())
+  projectId     String
+  parentSuiteId String?
+  name          String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parentSuite TestSuite?  @relation("SuiteTree", fields: [parentSuiteId], references: [id], onDelete: Cascade)
+  children    TestSuite[] @relation("SuiteTree")
+  cases       TestCase[]
+
+  @@index([projectId])
+  @@index([parentSuiteId])
+}
+
+enum Priority {
+  low
+  medium
+  high
+  critical
+}
+
+enum CaseType {
+  functional
+  regression
+  smoke
+  integration
+  performance
+  security
+  usability
+}
+
+model TestCase {
+  id             String   @id @default(cuid())
+  suiteId        String
+  title          String
+  preconditions  String?
+  // Ordered list of steps; each step is { action, expected }.
+  steps          Json     @default("[]")
+  expectedResult String?
+  priority       Priority @default(medium)
+  type           CaseType @default(functional)
+  tags           String[] @default([])
+  // Optional Jira issue key or other external reference.
+  externalRef    String?
+  createdById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  suite      TestSuite       @relation(fields: [suiteId], references: [id], onDelete: Cascade)
+  createdBy  User?           @relation("CaseCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  executions TestExecution[]
+
+  @@index([suiteId])
+  @@index([tags])
+}
+
+// ---------------------------------------------------------------------------
+// Runs / Cycles & Executions
+// ---------------------------------------------------------------------------
+
+model TestRun {
+  id          String    @id @default(cuid())
+  projectId   String
+  name        String
+  environment String?
+  startDate   DateTime?
+  endDate     DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  project    Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  executions TestExecution[]
+
+  @@index([projectId])
+}
+
+enum ExecutionStatus {
+  untested
+  pass
+  fail
+  blocked
+  skipped
+}
+
+model TestExecution {
+  id           String          @id @default(cuid())
+  runId        String
+  caseId       String
+  executedById String?
+  executedAt   DateTime?
+  status       ExecutionStatus @default(untested)
+  notes        String?
+  // Jira / GitHub issue link for a logged defect.
+  defectRef    String?
+  // Screenshot / log URLs.
+  attachments  String[]        @default([])
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  run        TestRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  case       TestCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  executedBy User?    @relation("ExecutedBy", fields: [executedById], references: [id], onDelete: SetNull)
+
+  // One execution row per (run, case).
+  @@unique([runId, caseId])
+  @@index([caseId])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Automation results (v2 — CI ingestion). Modeled now, unused in Phase 1.
+// ---------------------------------------------------------------------------
+
+model AutomationResult {
+  id           String   @id @default(cuid())
+  runId        String
+  source       String // Maestro | Appium | Playwright | JUnit
+  rawPayload   Json
+  parsedStatus String?
+  linkedCaseId String?
+  createdAt    DateTime @default(now())
+
+  @@index([runId])
+}
