@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth";
+import { buildCaseWhere } from "@/lib/cases-query";
 import type { Step } from "@/lib/validation";
 
 const PRIORITY_OUT: Record<string, string> = {
@@ -59,15 +60,25 @@ export async function POST(
 
   const body = (await req.json().catch(() => ({}))) as {
     ids?: string[];
+    suiteId?: string | null;
+    archived?: boolean;
+    q?: string;
     format?: "xlsx" | "csv";
   };
   const format = body.format === "csv" ? "csv" : "xlsx";
 
+  // Export the selected ids, or the whole current scope when nothing selected.
+  const where =
+    body.ids && body.ids.length > 0
+      ? { suite: { projectId }, id: { in: body.ids } }
+      : await buildCaseWhere(
+          projectId,
+          { suiteId: body.suiteId ?? undefined, archived: body.archived },
+          body.q
+        );
+
   const cases = await prisma.testCase.findMany({
-    where: {
-      suite: { projectId },
-      ...(body.ids && body.ids.length > 0 ? { id: { in: body.ids } } : {}),
-    },
+    where,
     include: { suite: true },
     orderBy: [{ suiteId: "asc" }, { sourceKey: "asc" }],
   });

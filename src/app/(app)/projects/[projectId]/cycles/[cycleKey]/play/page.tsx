@@ -1,0 +1,95 @@
+import { notFound } from "next/navigation";
+import { prisma } from "@/lib/prisma";
+import { requireUser } from "@/lib/auth";
+import type { Step } from "@/lib/validation";
+import { TestPlayer, type PlayerData } from "./test-player";
+
+export default async function PlayerPage({
+  params,
+}: {
+  params: Promise<{ projectId: string; cycleKey: string }>;
+}) {
+  const { projectId, cycleKey } = await params;
+  const user = await requireUser();
+
+  const [cycle, members] = await Promise.all([
+    prisma.testRun.findFirst({
+      where: {
+        project: { id: projectId, members: { some: { userId: user.id } } },
+        OR: [{ key: cycleKey }, { id: cycleKey }],
+      },
+      include: {
+        executions: {
+          include: {
+            case: {
+              select: {
+                id: true,
+                key: true,
+                title: true,
+                priority: true,
+                component: true,
+                objective: true,
+                preconditions: true,
+                steps: true,
+                estimatedTime: true,
+                suite: { select: { name: true } },
+              },
+            },
+            executedBy: { select: { name: true, email: true } },
+          },
+          orderBy: { createdAt: "asc" },
+        },
+      },
+    }),
+    prisma.projectMember.findMany({
+      where: { projectId },
+      select: { user: { select: { id: true, name: true, email: true } } },
+    }),
+  ]);
+  if (!cycle) notFound();
+
+  const data: PlayerData = {
+    cycle: {
+      id: cycle.id,
+      key: cycle.key,
+      name: cycle.name,
+      startDate: cycle.startDate ? cycle.startDate.toISOString().slice(0, 10) : "",
+      endDate: cycle.endDate ? cycle.endDate.toISOString().slice(0, 10) : "",
+    },
+    users: members.map((m) => m.user),
+    executions: cycle.executions.map((e) => ({
+      id: e.id,
+      status: e.status,
+      notes: e.notes,
+      defectRef: e.defectRef,
+      stepResults: (e.stepResults as unknown as { status: string }[]) ?? [],
+      environment: e.environment,
+      iteration: e.iteration,
+      releaseVersion: e.releaseVersion,
+      assignedToName: e.assignedToName,
+      actualTime: e.actualTime,
+      executedByName: e.executedBy?.name ?? e.executedBy?.email ?? null,
+      caseId: e.case.id,
+      caseKey: e.case.key,
+      caseTitle: e.case.title,
+      casePriority: e.case.priority,
+      caseComponent: e.case.component,
+      caseFolder: e.case.suite?.name ?? null,
+      caseObjective: e.case.objective,
+      casePreconditions: e.case.preconditions,
+      caseSteps: (e.case.steps as unknown as Step[]) ?? [],
+      caseEstimatedTime: e.case.estimatedTime,
+    })),
+  };
+
+  return (
+    <div className="h-full">
+      <TestPlayer
+        projectId={projectId}
+        cycleKey={cycleKey}
+        data={data}
+        currentUserName={user.name ?? user.email}
+      />
+    </div>
+  );
+}

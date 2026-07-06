@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import type { Role, User } from "@prisma/client";
@@ -5,11 +6,14 @@ import type { Role, User } from "@prisma/client";
 /**
  * Resolve the Apollo `User` row for the currently signed-in Clerk user.
  *
+ * Wrapped in React `cache()` so multiple callers within one request (e.g. the
+ * app layout and the page) share a single DB lookup instead of repeating it.
+ *
  * The Clerk webhook (`/api/webhooks/clerk`) normally creates this row on
  * sign-up, but we upsert here as a fallback so the app works even before the
  * webhook is configured (e.g. local dev without a public tunnel).
  */
-export async function getCurrentUser(): Promise<User | null> {
+export const getCurrentUser = cache(async (): Promise<User | null> => {
   const { userId } = await auth();
   if (!userId) return null;
 
@@ -35,7 +39,7 @@ export async function getCurrentUser(): Promise<User | null> {
     update: { email, name },
     create: { clerkUserId: userId, email, name },
   });
-}
+});
 
 /** Like {@link getCurrentUser} but throws if there is no signed-in user. */
 export async function requireUser(): Promise<User> {

@@ -1,5 +1,11 @@
 import { prisma } from "@/lib/prisma";
 import { parseZephyrWorkbook, type ParsedCase } from "./zephyr";
+import {
+  initProjectKeyingFromKeys,
+  nextCaseKey,
+  bumpCaseSeqToMax,
+  parseKey,
+} from "@/lib/keys";
 import type { Prisma } from "@prisma/client";
 
 export type ImportSummary = {
@@ -46,6 +52,13 @@ export async function importCases(opts: {
   const parsed = await parseZephyrWorkbook(opts.buffer);
   const total = parsed.cases.length;
   opts.onStart?.(total);
+
+  // Establish the project's key prefix/sequence from the file's Zephyr keys
+  // (only if not already set), so generated keys stay consistent.
+  await initProjectKeyingFromKeys(
+    opts.projectId,
+    parsed.cases.map((c) => c.sourceKey)
+  );
 
   const suiteCache = new Map<string, string>();
   let suitesCreated = 0;
@@ -98,8 +111,16 @@ export async function importCases(opts: {
       await prisma.testCase.update({ where: { id: existing.id }, data });
       updated++;
     } else {
+      // Imported cases keep their Zephyr key; keyless rows get a generated one.
+      const key = pc.sourceKey ?? (await nextCaseKey(opts.projectId));
       await prisma.testCase.create({
-        data: { ...data, sourceKey: pc.sourceKey, createdById: opts.userId },
+        data: {
+          ...data,
+          key,
+          keyNum: parseKey(key)?.num ?? null,
+          sourceKey: pc.sourceKey,
+          createdById: opts.userId,
+        },
       });
       created++;
     }
@@ -107,6 +128,9 @@ export async function importCases(opts: {
     done++;
     opts.onProgress?.(done, total);
   }
+
+  // Keep the counter past the highest imported number.
+  await bumpCaseSeqToMax(opts.projectId);
 
   return {
     created,

@@ -43,12 +43,18 @@ model Project {
   id          String   @id @default(cuid())
   name        String
   description String?
+  // Case-key prefix (e.g. "TS") and last-used sequence number. Case keys are
+  // "<keyPrefix>-T<caseSeq>". Prefix is detected from imported Zephyr keys.
+  keyPrefix   String?
+  caseSeq     Int      @default(0)
+  cycleSeq    Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  members ProjectMember[]
-  suites  TestSuite[]
-  runs    TestRun[]
+  members      ProjectMember[]
+  suites       TestSuite[]
+  runs         TestRun[]
+  cycleFolders CycleFolder[]
 }
 
 // Join table: User <-> Project (many-to-many) with a per-project role hook.
@@ -121,6 +127,12 @@ model TestCase {
   id             String   @id @default(cuid())
   suiteId        String
   title          String
+  // Human-readable unique key shown in the UI (e.g. "TS-T7060"). For imported
+  // cases this equals the Zephyr key; for new cases it is generated from the
+  // project's prefix + sequence.
+  key            String?  @unique
+  // Numeric part of `key` (e.g. 7060) so the Key column sorts numerically.
+  keyNum         Int?
   // Source system key (e.g. Zephyr "TS-T7060"). Preserved on import and used
   // to make re-imports idempotent. Nullable for manually-authored cases;
   // Postgres allows multiple NULLs under a unique constraint.
@@ -165,50 +177,98 @@ model TestCase {
   @@index([tags])
   @@index([status])
   @@index([archived])
+  @@index([keyNum])
 }
 
 // ---------------------------------------------------------------------------
 // Runs / Cycles & Executions
 // ---------------------------------------------------------------------------
 
+// Test Cycle (a scheduled run of a set of cases).
 model TestRun {
   id          String    @id @default(cuid())
   projectId   String
+  // Human key (e.g. "TS-R96") + numeric part for sorting.
+  key         String?   @unique
+  keyNum      Int?
   name        String
+  description String?
+  status      CycleStatus @default(not_executed)
   environment String?
+  version     String?
+  iteration   String?
+  ownerName   String?
+  folderId    String?
   startDate   DateTime?
   endDate     DateTime?
+  customFields Json     @default("{}")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   project    Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  folder     CycleFolder?    @relation(fields: [folderId], references: [id], onDelete: SetNull)
   executions TestExecution[]
 
   @@index([projectId])
+  @@index([folderId])
+  @@index([keyNum])
+}
+
+// Nestable folders for test cycles (separate tree from test-case suites).
+model CycleFolder {
+  id             String   @id @default(cuid())
+  projectId      String
+  parentFolderId String?
+  name           String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  project  Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parent   CycleFolder?  @relation("CycleFolderTree", fields: [parentFolderId], references: [id], onDelete: Cascade)
+  children CycleFolder[] @relation("CycleFolderTree")
+  cycles   TestRun[]
+
+  @@index([projectId])
+  @@index([parentFolderId])
+}
+
+// Manually-set lifecycle status of a test cycle (distinct from progress %).
+enum CycleStatus {
+  not_executed
+  in_progress
+  done
 }
 
 enum ExecutionStatus {
-  untested
+  not_executed
+  in_progress
   pass
   fail
   blocked
-  skipped
 }
 
 model TestExecution {
-  id           String          @id @default(cuid())
-  runId        String
-  caseId       String
-  executedById String?
-  executedAt   DateTime?
-  status       ExecutionStatus @default(untested)
-  notes        String?
+  id             String          @id @default(cuid())
+  runId          String
+  caseId         String
+  executedById   String?
+  executedAt     DateTime?
+  status         ExecutionStatus @default(not_executed)
+  notes          String?
   // Jira / GitHub issue link for a logged defect.
-  defectRef    String?
+  defectRef      String?
   // Screenshot / log URLs.
-  attachments  String[]        @default([])
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
+  attachments    String[]        @default([])
+  // Per-step results (parallel to the case's steps): [{ status, at }].
+  stepResults    Json            @default("[]")
+  // Test Player execution details.
+  environment    String?
+  iteration      String?
+  releaseVersion String?
+  assignedToName String?
+  actualTime     Int? // seconds spent executing
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 
   run        TestRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
   case       TestCase @relation(fields: [caseId], references: [id], onDelete: Cascade)

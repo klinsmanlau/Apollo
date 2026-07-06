@@ -2,8 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth";
+import { queryCasePage, suiteCaseCounts } from "@/lib/cases-query";
 import { ImportModal } from "./import-modal";
 import { ProjectWorkspace } from "./project-workspace";
+import { ProjectTabs } from "./project-tabs";
 
 export default async function ProjectPage({
   params,
@@ -16,42 +18,34 @@ export default async function ProjectPage({
   const { folder } = await searchParams;
   const user = await requireUser();
 
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, members: { some: { userId: user.id } } },
-  });
+  // Everything the page needs runs in one parallel batch (each DB round-trip
+  // to the pooler is the cost driver, so we avoid sequential awaits). Case
+  // rows load on demand afterwards; here we only prefetch the first "all" page.
+  const [project, suites, directCounts, archivedCount, initialAll] =
+    await Promise.all([
+      prisma.project.findFirst({
+        where: { id: projectId, members: { some: { userId: user.id } } },
+      }),
+      prisma.testSuite.findMany({
+        where: { projectId },
+        select: { id: true, name: true, parentSuiteId: true },
+      }),
+      suiteCaseCounts(projectId),
+      prisma.testCase.count({ where: { suite: { projectId }, archived: true } }),
+      folder ? null : queryCasePage(projectId, {}, "", 0),
+    ]);
   if (!project) notFound();
 
-  const caseSelect = {
-    id: true,
-    title: true,
-    sourceKey: true,
-    priority: true,
-    type: true,
-    status: true,
-    suiteId: true,
-  } as const;
-
-  const [suites, cases, archivedCases] = await Promise.all([
-    prisma.testSuite.findMany({
-      where: { projectId },
-      select: { id: true, name: true, parentSuiteId: true },
-    }),
-    // Active cases power the folder tree; archived are shown in their own view.
-    prisma.testCase.findMany({
-      where: { suite: { projectId }, archived: false },
-      select: caseSelect,
-      orderBy: { updatedAt: "desc" },
-    }),
-    prisma.testCase.findMany({
-      where: { suite: { projectId }, archived: true },
-      select: caseSelect,
-      orderBy: { archivedAt: "desc" },
-    }),
-  ]);
+  // Deep-linked to a folder → fetch that folder's first page (rare path).
+  const validFolder =
+    folder && suites.some((s) => s.id === folder) ? folder : null;
+  const initial = validFolder
+    ? await queryCasePage(projectId, { suiteId: validFolder }, "", 0)
+    : initialAll ?? (await queryCasePage(projectId, {}, "", 0));
 
   return (
-    <div className="animate-fade space-y-5">
-      <div className="flex items-start justify-between">
+    <div className="animate-fade flex h-full flex-col gap-4">
+      <div className="flex shrink-0 items-start justify-between">
         <div>
           <Link
             href="/projects"
@@ -67,12 +61,16 @@ export default async function ProjectPage({
         <ImportModal projectId={projectId} />
       </div>
 
+      <ProjectTabs projectId={projectId} />
+
       <ProjectWorkspace
         projectId={projectId}
         suites={suites}
-        cases={cases}
-        archivedCases={archivedCases}
-        initialFolder={folder ?? null}
+        directCounts={directCounts}
+        archivedCount={archivedCount}
+        initialCases={initial.cases}
+        initialTotal={initial.total}
+        initialFolder={validFolder}
       />
     </div>
   );

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Priority, CaseType, CaseStatus } from "@prisma/client";
-import { PriorityBadge, TypeBadge } from "@/components/ui";
+import { PriorityBadge, CaseStatusBadge } from "@/components/ui";
 import { NewCaseModal } from "./new-case-modal";
 import {
   moveCase,
@@ -20,6 +20,7 @@ export type WSuite = { id: string; name: string; parentSuiteId: string | null };
 export type WCase = {
   id: string;
   title: string;
+  key: string | null;
   sourceKey: string | null;
   priority: Priority;
   type: CaseType;
@@ -31,6 +32,9 @@ type Drag = { kind: "case"; id: string } | { kind: "suite"; id: string } | null;
 
 const PAGE_SIZE = 50;
 const ARCHIVED = "__archived__";
+
+type SortField = "key" | "title" | "priority" | "status";
+type SortDir = "asc" | "desc";
 
 /** Inline text field for creating or renaming a folder. */
 function FolderInput({
@@ -81,18 +85,36 @@ function FolderInput({
 export function ProjectWorkspace({
   projectId,
   suites,
-  cases,
-  archivedCases,
+  directCounts,
+  archivedCount,
+  initialCases,
+  initialTotal,
   initialFolder,
 }: {
   projectId: string;
   suites: WSuite[];
-  cases: WCase[];
-  archivedCases: WCase[];
+  directCounts: Record<string, number>;
+  archivedCount: number;
+  initialCases: WCase[];
+  initialTotal: number;
   initialFolder: string | null;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+
+  // Case rows are fetched on demand (per folder + page); see load().
+  const [rows, setRows] = useState<WCase[]>(initialCases);
+  const [total, setTotal] = useState(initialTotal);
+  const [loading, setLoading] = useState(false);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadAbort = useRef<AbortController | null>(null);
+  const [sortField, setSortField] = useState<SortField | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  // Mirror of the sort so handlers never read a stale closure value.
+  const sortRef = useRef<{ field: SortField | null; dir: SortDir }>({
+    field: null,
+    dir: "asc",
+  });
 
   const [selectedSuite, setSelectedSuite] = useState<string | null>(
     initialFolder && suites.some((s) => s.id === initialFolder)
@@ -102,12 +124,12 @@ export function ProjectWorkspace({
   const [folderQuery, setFolderQuery] = useState("");
   const [caseQuery, setCaseQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [expanded, setExpanded] = useState<Set<string>>(
-    () => new Set(suites.map((s) => s.id))
-  );
+  // Collapsed by default (top-level folders only).
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(0);
   const [dropTarget, setDropTarget] = useState<string | "root" | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   // Inline folder creation: { parent } where parent null = top level.
@@ -185,56 +207,101 @@ export function ProjectWorkspace({
     return m;
   }, [suites, childrenOf]);
 
-  const casesBySuite = useMemo(() => {
-    const m = new Map<string, WCase[]>();
-    for (const c of cases) {
-      const arr = m.get(c.suiteId) ?? [];
-      arr.push(c);
-      m.set(c.suiteId, arr);
-    }
-    return m;
-  }, [cases]);
+  // Total active cases (for the "All test cases" row).
+  const totalCount = useMemo(
+    () => Object.values(directCounts).reduce((a, b) => a + b, 0),
+    [directCounts]
+  );
 
+  // Descendant-inclusive count for a folder, from the aggregate map.
   const countFor = (suiteId: string) => {
     let n = 0;
-    for (const id of subtreeOf.get(suiteId) ?? [suiteId]) {
-      n += casesBySuite.get(id)?.length ?? 0;
-    }
+    for (const id of subtreeOf.get(suiteId) ?? [suiteId]) n += directCounts[id] ?? 0;
     return n;
   };
 
-  // ---- right-panel case list -------------------------------------------
-  const visibleCases = useMemo(() => {
-    const source = archivedView
-      ? archivedCases
-      : selectedSuite
-        ? cases.filter((c) => subtreeOf.get(selectedSuite)?.has(c.suiteId))
-        : cases;
-    const q = caseQuery.trim().toLowerCase();
-    return q
-      ? source.filter(
-          (c) =>
-            c.title.toLowerCase().includes(q) ||
-            (c.sourceKey ?? "").toLowerCase().includes(q)
-        )
-      : source;
-  }, [cases, archivedCases, archivedView, selectedSuite, subtreeOf, caseQuery]);
-
-  const pageCount = Math.max(1, Math.ceil(visibleCases.length / PAGE_SIZE));
-  const safePage = Math.min(page, pageCount - 1);
-  const pageCases = visibleCases.slice(
-    safePage * PAGE_SIZE,
-    safePage * PAGE_SIZE + PAGE_SIZE
-  );
-
+  // ---- right-panel case list (server-fetched, paginated) ---------------
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const allVisibleSelected =
-    pageCases.length > 0 && pageCases.every((c) => selected.has(c.id));
+    rows.length > 0 && rows.every((c) => selected.has(c.id));
+
+  // Fetch one page of cases for the given scope/search/page/sort.
+  async function load(
+    scopeVal: string | null,
+    q: string,
+    pageVal: number,
+    sort: SortField | null = sortRef.current.field,
+    dir: SortDir = sortRef.current.dir
+  ) {
+    // Cancel any in-flight request so only the latest one wins.
+    loadAbort.current?.abort();
+    const ac = new AbortController();
+    loadAbort.current = ac;
+
+    setLoading(true);
+    const params = new URLSearchParams();
+    if (scopeVal === ARCHIVED) {
+      params.set("archived", "1");
+    } else if (scopeVal) {
+      // Send the folder's subtree ids we already know (skips a DB lookup).
+      const ids = [...(subtreeOf.get(scopeVal) ?? [scopeVal])];
+      params.set("suiteIds", ids.join(","));
+    }
+    if (q.trim()) params.set("q", q.trim());
+    params.set("page", String(pageVal));
+    if (sort) {
+      params.set("sort", sort);
+      params.set("dir", dir);
+    }
+    try {
+      const res = await fetch(
+        `/api/projects/${projectId}/cases?${params.toString()}`,
+        { cache: "no-store", signal: ac.signal }
+      );
+      if (res.ok && loadAbort.current === ac) {
+        const data = (await res.json()) as { cases: WCase[]; total: number };
+        setRows(data.cases);
+        setTotal(data.total);
+      }
+    } catch {
+      // Ignore aborted/failed requests.
+    } finally {
+      if (loadAbort.current === ac) setLoading(false);
+    }
+  }
+
+  function onCaseSearch(v: string) {
+    setCaseQuery(v);
+    setPage(0);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => load(selectedSuite, v, 0), 300);
+  }
+
+  function goToPage(p: number) {
+    const clamped = Math.min(Math.max(0, p), pageCount - 1);
+    setPage(clamped);
+    load(selectedSuite, caseQuery, clamped);
+  }
+
+  // Click a header: first click sorts ascending, clicking the same header
+  // again toggles the direction. Read/write the ref so repeat clicks never
+  // act on a stale closure.
+  function onSort(field: SortField) {
+    const prev = sortRef.current;
+    const dir: SortDir =
+      prev.field === field && prev.dir === "asc" ? "desc" : "asc";
+    sortRef.current = { field, dir };
+    setSortField(field);
+    setSortDir(dir);
+    setPage(0);
+    load(selectedSuite, caseQuery, 0, field, dir);
+  }
 
   function toggleSelectAll() {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (allVisibleSelected) pageCases.forEach((c) => next.delete(c.id));
-      else pageCases.forEach((c) => next.add(c.id));
+      if (allVisibleSelected) rows.forEach((c) => next.delete(c.id));
+      else rows.forEach((c) => next.add(c.id));
       return next;
     });
   }
@@ -251,12 +318,15 @@ export function ProjectWorkspace({
     setSelectedSuite(id);
     setPage(0);
     setSelected(new Set());
+    load(id, caseQuery, 0);
   }
 
   // ---- server ops ------------------------------------------------------
   function run(fn: () => Promise<unknown>) {
     startTransition(async () => {
       await fn();
+      // Refetch the current view and refresh folder counts (RSC).
+      await load(selectedSuite, caseQuery, page);
       router.refresh();
     });
   }
@@ -291,11 +361,23 @@ export function ProjectWorkspace({
 
   async function doExport(format: "xlsx" | "csv") {
     setExportOpen(false);
-    const ids = selectedIds.length > 0 ? selectedIds : visibleCases.map((c) => c.id);
+    // Export the selection, or the whole current scope when nothing is checked.
+    const body =
+      selectedIds.length > 0
+        ? { ids: selectedIds, format }
+        : {
+            suiteId:
+              selectedSuite && selectedSuite !== ARCHIVED
+                ? selectedSuite
+                : undefined,
+            archived: selectedSuite === ARCHIVED,
+            q: caseQuery.trim() || undefined,
+            format,
+          };
     const res = await fetch(`/api/projects/${projectId}/export`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids, format }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) return;
     const blob = await res.blob();
@@ -323,7 +405,8 @@ export function ProjectWorkspace({
     const kids = childrenOf.get(suite.id) ?? [];
     const isSelected = selectedSuite === suite.id;
     const isDrop = dropTarget === suite.id;
-    const open = expanded.has(suite.id);
+    // While searching, force branches open so matches are visible.
+    const open = !!folderQuery.trim() || expanded.has(suite.id);
     const menuOpen = openMenu === suite.id;
 
     const subtreeMatch =
@@ -395,12 +478,14 @@ export function ProjectWorkspace({
                     return next;
                   });
                 }}
-                className="w-4 shrink-0 text-subtle"
+                className="flex w-6 shrink-0 items-center justify-center text-xl leading-none text-subtle transition-colors hover:text-fg"
               >
                 {open ? "▾" : "▸"}
               </button>
             ) : (
-              <span className="w-4 shrink-0 text-center text-subtle">•</span>
+              <span className="w-6 shrink-0 text-center text-xl leading-none text-subtle">
+                •
+              </span>
             )}
             <span className="truncate">{suite.name}</span>
             <span className="ml-auto shrink-0 text-xs text-subtle group-hover:hidden">
@@ -569,25 +654,87 @@ export function ProjectWorkspace({
     <div
       ref={containerRef}
       style={{ "--left-w": `${leftWidth}px` } as React.CSSProperties}
-      className="grid grid-cols-1 gap-4 lg:grid-cols-[var(--left-w)_1rem_minmax(0,1fr)] lg:gap-0"
+      className="grid min-h-0 grid-cols-1 gap-4 lg:flex-1 lg:grid-cols-[var(--left-w)_1rem_minmax(0,1fr)] lg:gap-0"
     >
       {/* ---------------- Left panel ---------------- */}
-      <aside className="card animate-fade flex max-h-[calc(100vh-8rem)] flex-col p-3">
+      <aside className="card animate-fade flex min-h-0 max-h-[70dvh] flex-col p-3 lg:h-full lg:max-h-none">
         <div className="mb-2 flex items-center gap-2">
-          <button
-            onClick={() => {
-              setCreating({ parent: null });
-            }}
-            className="h-8 flex-1 rounded-md bg-primary px-2 text-xs font-medium text-primary-fg transition-all hover:opacity-90 active:scale-95"
-          >
-            + New Folder
-          </button>
-          <input
-            value={folderQuery}
-            onChange={(e) => setFolderQuery(e.target.value)}
-            placeholder="Search…"
-            className="field h-8 w-28 px-2 py-1 text-xs"
-          />
+          {searchOpen ? (
+            <div className="flex h-8 flex-1 items-center gap-1.5 rounded-md border border-line bg-surface px-2">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="shrink-0 text-subtle"
+              >
+                <circle cx="11" cy="11" r="7" />
+                <path d="m21 21-4.3-4.3" />
+              </svg>
+              <input
+                autoFocus
+                value={folderQuery}
+                onChange={(e) => setFolderQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setSearchOpen(false);
+                    setFolderQuery("");
+                  }
+                }}
+                onBlur={() => {
+                  setSearchOpen(false);
+                  setFolderQuery("");
+                }}
+                placeholder="Search folders…"
+                className="h-full flex-1 bg-transparent text-xs text-fg outline-none placeholder:text-subtle"
+              />
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  setSearchOpen(false);
+                  setFolderQuery("");
+                }}
+                className="shrink-0 rounded p-0.5 text-subtle hover:text-fg"
+                aria-label="Close search"
+              >
+                ✕
+              </button>
+            </div>
+          ) : (
+            <>
+              <button
+                onClick={() => setCreating({ parent: null })}
+                className="h-8 shrink-0 rounded-md bg-primary px-3 text-xs font-medium text-primary-fg transition-all hover:opacity-90 active:scale-95"
+              >
+                + New Folder
+              </button>
+              <button
+                type="button"
+                onClick={() => setSearchOpen(true)}
+                className="ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-line text-subtle transition-colors hover:bg-surface-muted hover:text-fg"
+                aria-label="Search folders"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m21 21-4.3-4.3" />
+                </svg>
+              </button>
+            </>
+          )}
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -615,7 +762,7 @@ export function ProjectWorkspace({
           >
             <span>All test cases</span>
             <span className="text-xs font-normal text-subtle">
-              {cases.length}
+              {totalCount}
             </span>
           </div>
 
@@ -656,7 +803,7 @@ export function ProjectWorkspace({
             }`}
           >
             <span>🗄 Archived test cases</span>
-            <span className="text-xs text-subtle">{archivedCases.length}</span>
+            <span className="text-xs text-subtle">{archivedCount}</span>
           </div>
         </div>
       </aside>
@@ -676,22 +823,19 @@ export function ProjectWorkspace({
       </div>
 
       {/* ---------------- Right panel ---------------- */}
-      <section className="card animate-fade flex min-h-[24rem] flex-col">
+      <section className="card animate-fade flex min-h-[24rem] flex-col lg:h-full lg:min-h-0">
         {/* Toolbar */}
         <div className="flex flex-wrap items-center gap-2 border-b border-line p-3">
           <div className="mr-auto">
             <h2 className="text-sm font-semibold text-fg">{scopeName}</h2>
             <p className="text-xs text-subtle">
-              {visibleCases.length} case{visibleCases.length === 1 ? "" : "s"}
-              {pending && " · saving…"}
+              {total} case{total === 1 ? "" : "s"}
+              {loading ? " · loading…" : pending ? " · saving…" : ""}
             </p>
           </div>
           <input
             value={caseQuery}
-            onChange={(e) => {
-              setCaseQuery(e.target.value);
-              setPage(0);
-            }}
+            onChange={(e) => onCaseSearch(e.target.value)}
             placeholder="Search cases…"
             className="field h-8 w-44 px-2 py-1 text-xs"
           />
@@ -783,8 +927,16 @@ export function ProjectWorkspace({
         )}
 
         {/* Table */}
-        <div className="min-h-0 flex-1 overflow-auto">
-          {visibleCases.length === 0 ? (
+        <div className="relative min-h-0 flex-1">
+          <div className="h-full overflow-auto">
+          <div
+            className={
+              loading
+                ? "pointer-events-none select-none opacity-40 transition-opacity"
+                : "transition-opacity"
+            }
+          >
+          {rows.length === 0 && !loading ? (
             <p className="p-6 text-sm text-subtle">
               {archivedView
                 ? "No archived test cases."
@@ -804,16 +956,35 @@ export function ProjectWorkspace({
                       aria-label="Select all"
                     />
                   </th>
-                  <th className="px-2 py-2 text-left font-semibold">Key</th>
-                  <th className="px-2 py-2 text-left font-semibold">Name</th>
-                  <th className="px-2 py-2 text-left font-semibold">Priority</th>
-                  <th className="px-2 py-2 text-left font-semibold">Type</th>
-                  <th className="px-2 py-2 text-left font-semibold">Status</th>
+                  {(
+                    [
+                      ["key", "Key"],
+                      ["title", "Name"],
+                      ["priority", "Priority"],
+                      ["status", "Status"],
+                    ] as [SortField, string][]
+                  ).map(([field, label]) => (
+                    <th key={field} className="px-2 py-2 text-left font-semibold">
+                      <button
+                        onClick={() => onSort(field)}
+                        className="inline-flex items-center gap-1 transition-colors hover:text-fg"
+                      >
+                        {label}
+                        <span className="text-[10px] text-subtle">
+                          {sortField === field
+                            ? sortDir === "asc"
+                              ? "▲"
+                              : "▼"
+                            : ""}
+                        </span>
+                      </button>
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {pageCases.map((c) => (
-                  <tr
+                {rows.map((c) => (
+<tr
                     key={c.id}
                     draggable={!archivedView}
                     onDragStart={(e) => {
@@ -835,12 +1006,21 @@ export function ProjectWorkspace({
                         aria-label={`Select ${c.title}`}
                       />
                     </td>
-                    <td className="whitespace-nowrap px-2 py-2 font-mono text-xs text-subtle">
-                      {c.sourceKey ?? "—"}
+                    <td className="whitespace-nowrap px-2 py-2">
+                      {c.key ?? c.sourceKey ? (
+                        <Link
+                          href={`/projects/${projectId}/cases/${c.key ?? c.id}`}
+                          className="font-mono text-xs text-ring hover:underline"
+                        >
+                          {c.key ?? c.sourceKey}
+                        </Link>
+                      ) : (
+                        <span className="font-mono text-xs text-subtle">—</span>
+                      )}
                     </td>
                     <td className="px-2 py-2">
                       <Link
-                        href={`/projects/${projectId}/cases/${c.id}`}
+                        href={`/projects/${projectId}/cases/${c.key ?? c.id}`}
                         className="text-fg hover:text-ring hover:underline"
                       >
                         {c.title}
@@ -850,43 +1030,44 @@ export function ProjectWorkspace({
                       <PriorityBadge priority={c.priority} />
                     </td>
                     <td className="px-2 py-2">
-                      <TypeBadge type={c.type} />
-                    </td>
-                    <td className="px-2 py-2">
-                      <span className="inline-flex items-center rounded bg-surface-muted px-1.5 py-0.5 text-xs font-medium text-muted">
-                        {c.status}
-                      </span>
+                      <CaseStatusBadge status={c.status} />
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
+          </div>
+          </div>
+          {loading && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-surface/50 backdrop-blur-[1px]">
+              <div className="h-7 w-7 animate-spin rounded-full border-2 border-line border-t-ring" />
+            </div>
+          )}
         </div>
 
         {/* Footer / pagination */}
-        {visibleCases.length > 0 && (
+        {total > 0 && (
           <div className="flex items-center justify-between border-t border-line px-3 py-2 text-xs text-subtle">
             <span>
-              {safePage * PAGE_SIZE + 1}–
-              {Math.min((safePage + 1) * PAGE_SIZE, visibleCases.length)} of{" "}
-              {visibleCases.length}
+              {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of{" "}
+              {total}
             </span>
             {pageCount > 1 && (
               <div className="flex items-center gap-2">
                 <button
-                  disabled={safePage === 0}
-                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                  onClick={() => goToPage(page - 1)}
                   className="rounded px-2 py-1 hover:bg-surface-muted disabled:opacity-40"
                 >
                   ← Prev
                 </button>
                 <span>
-                  {safePage + 1}/{pageCount}
+                  {page + 1}/{pageCount}
                 </span>
                 <button
-                  disabled={safePage >= pageCount - 1}
-                  onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+                  disabled={page >= pageCount - 1}
+                  onClick={() => goToPage(page + 1)}
                   className="rounded px-2 py-1 hover:bg-surface-muted disabled:opacity-40"
                 >
                   Next →

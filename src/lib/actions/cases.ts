@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth";
 import { caseSchema, type Step } from "@/lib/validation";
+import { nextCaseKey, parseKey } from "@/lib/keys";
+import type { Prisma } from "@prisma/client";
 
 export type FormState = { error?: string } | undefined;
 
@@ -82,12 +84,18 @@ export async function createCase(
     return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
-  const created = await prisma.testCase.create({
-    data: { ...toCaseData(parsed.data), createdById: user.id },
+  const key = await nextCaseKey(projectId);
+  await prisma.testCase.create({
+    data: {
+      ...toCaseData(parsed.data),
+      key,
+      keyNum: parseKey(key)?.num ?? null,
+      createdById: user.id,
+    },
   });
 
   revalidatePath(`/projects/${projectId}`);
-  redirect(`/projects/${projectId}/cases/${created.id}`);
+  redirect(`/projects/${projectId}/cases/${key}`);
 }
 
 export async function updateCase(
@@ -103,13 +111,73 @@ export async function updateCase(
     return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
-  await prisma.testCase.update({
+  const updated = await prisma.testCase.update({
     where: { id: caseId },
     data: toCaseData(parsed.data),
+    select: { key: true },
   });
 
-  revalidatePath(`/projects/${projectId}/cases/${caseId}`);
-  redirect(`/projects/${projectId}/cases/${caseId}`);
+  const dest = updated.key ?? caseId;
+  revalidatePath(`/projects/${projectId}/cases/${dest}`);
+  redirect(`/projects/${projectId}/cases/${dest}`);
+}
+
+/**
+ * Autosave a partial update to a case (used by the inline Details / Test Script
+ * editors). Only whitelisted fields are written; membership is enforced.
+ */
+export async function autosaveCase(
+  caseId: string,
+  patch: Record<string, unknown>
+): Promise<{ ok: true } | { error: string }> {
+  const user = await requireUser();
+  const existing = await prisma.testCase.findFirst({
+    where: {
+      id: caseId,
+      suite: { project: { members: { some: { userId: user.id } } } },
+    },
+    select: { id: true, suite: { select: { projectId: true } } },
+  });
+  if (!existing) return { error: "Not found" };
+
+  const data: Record<string, unknown> = {};
+  // Nullable string fields.
+  for (const f of [
+    "objective",
+    "preconditions",
+    "component",
+    "ownerName",
+    "externalRef",
+    "scriptBody",
+  ]) {
+    if (f in patch) data[f] = patch[f] ? String(patch[f]) : null;
+  }
+  if ("title" in patch) data.title = String(patch.title ?? "");
+  if ("priority" in patch) data.priority = patch.priority;
+  if ("type" in patch) data.type = patch.type;
+  if ("status" in patch) data.status = patch.status;
+  if ("scriptType" in patch) data.scriptType = patch.scriptType;
+  if ("estimatedTime" in patch)
+    data.estimatedTime =
+      patch.estimatedTime == null ? null : Number(patch.estimatedTime);
+  if ("tags" in patch) data.tags = patch.tags;
+  if ("coverage" in patch) data.coverage = patch.coverage;
+  if ("steps" in patch) data.steps = patch.steps;
+  if ("customFields" in patch) data.customFields = patch.customFields;
+  if ("suiteId" in patch && typeof patch.suiteId === "string") {
+    const target = await prisma.testSuite.findFirst({
+      where: { id: patch.suiteId, projectId: existing.suite.projectId },
+      select: { id: true },
+    });
+    if (target) data.suiteId = patch.suiteId;
+  }
+
+  if (Object.keys(data).length === 0) return { ok: true };
+  await prisma.testCase.update({
+    where: { id: caseId },
+    data: data as Prisma.TestCaseUncheckedUpdateInput,
+  });
+  return { ok: true };
 }
 
 export async function deleteCase(formData: FormData): Promise<void> {

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth";
 import type { Prisma } from "@prisma/client";
+import { nextCaseKey, parseKey } from "@/lib/keys";
 
 async function assertMember(projectId: string, userId: string) {
   const p = await prisma.project.findFirst({
@@ -102,8 +103,11 @@ export async function cloneCases(projectId: string, caseIds: string[]) {
   });
 
   for (const c of cases) {
+    const key = await nextCaseKey(projectId);
     await prisma.testCase.create({
       data: {
+        key,
+        keyNum: parseKey(key)?.num ?? null,
         suiteId: c.suiteId,
         title: `${c.title} (Copy)`,
         objective: c.objective,

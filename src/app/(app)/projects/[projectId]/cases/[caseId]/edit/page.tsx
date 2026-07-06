@@ -18,11 +18,11 @@ export default async function EditCasePage({
   const [testCase, suites] = await Promise.all([
     prisma.testCase.findFirst({
       where: {
-        id: caseId,
         suite: {
           projectId,
           project: { members: { some: { userId: user.id } } },
         },
+        OR: [{ key: caseId }, { id: caseId }],
       },
     }),
     prisma.testSuite.findMany({ where: { projectId } }),
@@ -35,7 +35,7 @@ export default async function EditCasePage({
     <div className="animate-fade mx-auto max-w-3xl space-y-6">
       <div>
         <Link
-          href={`/projects/${projectId}/cases/${caseId}`}
+          href={`/projects/${projectId}/cases/${testCase.key ?? testCase.id}`}
           className="text-sm text-subtle transition-colors hover:text-fg"
         >
           ← Back to case
@@ -45,7 +45,7 @@ export default async function EditCasePage({
       <CaseForm
         action={updateCase}
         projectId={projectId}
-        caseId={caseId}
+        caseId={testCase.id}
         suiteOptions={suiteOptions}
         initial={{
           suiteId: testCase.suiteId,

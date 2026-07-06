@@ -12,8 +12,8 @@ export default async function AppLayout({
   const user = await getCurrentUser();
 
   return (
-    <div className="min-h-screen">
-      <header className="themed sticky top-0 z-40 border-b border-line bg-surface/80 backdrop-blur">
+    <div className="flex h-dvh flex-col">
+      <header className="themed z-40 shrink-0 border-b border-line bg-surface">
         <div className="mx-auto flex h-14 max-w-[1600px] items-center justify-between px-6">
           <div className="flex items-center gap-6">
             <Link href="/projects" className="text-lg font-semibold text-fg">
@@ -39,7 +39,9 @@ export default async function AppLayout({
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-[1600px] px-6 py-8">{children}</main>
+      <main className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto h-full max-w-[1600px] px-6 py-6">{children}</div>
+      </main>
     </div>
   );
 }

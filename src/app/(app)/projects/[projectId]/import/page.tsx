@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth";
-import { ImportForm } from "./import-form";
+import { ImportPanel } from "./import-panel";
 
 export default async function ImportPage({
   params,
@@ -33,7 +33,7 @@ export default async function ImportPage({
         </p>
       </div>
       <div className="card p-5">
-        <ImportForm projectId={projectId} />
+        <ImportPanel projectId={projectId} />
       </div>
     </div>
   );
