@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const priorityEnum = z.enum(["low", "medium", "high", "critical"]);
+export const priorityEnum = z.enum(["low", "medium", "high"]);
 export const caseTypeEnum = z.enum([
   "functional",
   "regression",

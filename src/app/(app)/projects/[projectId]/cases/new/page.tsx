@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { requireUser } from "@/lib/auth";
+import { requireUser, getProjectRole, roleAtLeast } from "@/lib/auth";
 import { buildSuiteTree, flattenForSelect } from "@/lib/suites";
 import { createCase } from "@/lib/actions/cases";
 import { CaseForm } from "../case-form";
@@ -16,9 +16,11 @@ export default async function NewCasePage({
   const { projectId } = await params;
   const { suiteId } = await searchParams;
   const user = await requireUser();
+  const myRole = await getProjectRole(projectId, user);
+  if (!myRole || !roleAtLeast(myRole, "lead")) notFound();
 
   const project = await prisma.project.findFirst({
-    where: { id: projectId, members: { some: { userId: user.id } } },
+    where: { id: projectId },
   });
   if (!project) notFound();
 

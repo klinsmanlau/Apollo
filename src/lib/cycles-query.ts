@@ -15,7 +15,10 @@ export type CycleRow = {
   total: number;
   executed: number;
   passed: number;
-  progress: number; // 0..100
+  failed: number;
+  blocked: number;
+  inProgress: number;
+  progress: number; // 0..100 (share executed)
   status: "not_executed" | "in_progress" | "done";
 };
 
@@ -76,16 +79,22 @@ function buildWhere(
 }
 
 /** Direct cycle count per folder (for the tree). */
+/** Key under which cycles with no folder are counted (so the "All" total is right). */
+export const ROOT_COUNT_KEY = "__root";
+
 export async function cycleFolderCounts(
   projectId: string
 ): Promise<Record<string, number>> {
   const grouped = await prisma.testRun.groupBy({
     by: ["folderId"],
-    where: { projectId, folderId: { not: null } },
+    where: { projectId },
     _count: { _all: true },
   });
   const out: Record<string, number> = {};
-  for (const g of grouped) if (g.folderId) out[g.folderId] = g._count._all;
+  for (const g of grouped) {
+    // Folderless cycles group under null; bucket them so the total includes them.
+    out[g.folderId ?? ROOT_COUNT_KEY] = g._count._all;
+  }
   return out;
 }
 
@@ -127,18 +136,23 @@ export async function queryCyclePage(
       })
     : [];
 
-  const stats = new Map<string, { total: number; executed: number; passed: number }>();
+  type Stat = { total: number; executed: number; passed: number; failed: number; blocked: number; inProgress: number };
+  const zero = (): Stat => ({ total: 0, executed: 0, passed: 0, failed: 0, blocked: 0, inProgress: 0 });
+  const stats = new Map<string, Stat>();
   for (const g of grouped) {
-    const s = stats.get(g.runId) ?? { total: 0, executed: 0, passed: 0 };
+    const s = stats.get(g.runId) ?? zero();
     const n = g._count._all;
     s.total += n;
     if ((g.status as ExecutionStatus) !== "not_executed") s.executed += n;
     if (g.status === "pass") s.passed += n;
+    else if (g.status === "fail") s.failed += n;
+    else if (g.status === "blocked") s.blocked += n;
+    else if (g.status === "in_progress") s.inProgress += n;
     stats.set(g.runId, s);
   }
 
   const cycles: CycleRow[] = runs.map((r) => {
-    const s = stats.get(r.id) ?? { total: 0, executed: 0, passed: 0 };
+    const s = stats.get(r.id) ?? zero();
     const progress = s.total ? Math.round((s.executed / s.total) * 100) : 0;
     return {
       id: r.id,
@@ -148,6 +162,9 @@ export async function queryCyclePage(
       total: s.total,
       executed: s.executed,
       passed: s.passed,
+      failed: s.failed,
+      blocked: s.blocked,
+      inProgress: s.inProgress,
       progress,
       // Manually-set cycle status (distinct from the progress bar).
       status: r.status,

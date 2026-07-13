@@ -5,8 +5,10 @@ import Link from "next/link";
 import { autosaveCase, deleteCase } from "@/lib/actions/cases";
 import { Modal } from "@/components/modal";
 import { SelectField, opts, type Opt } from "@/components/select-field";
+import { StatusBadge } from "@/components/ui";
 import { CUSTOM_FIELDS } from "@/lib/custom-fields";
 import type { Step } from "@/lib/validation";
+import type { ExecutionStatus } from "@prisma/client";
 
 export type CaseUser = { id: string; name: string | null; email: string };
 
@@ -35,6 +37,21 @@ export type CaseData = {
 
 const TABS = ["Details", "Test Script", "Traceability", "Execution", "History"] as const;
 type Tab = (typeof TABS)[number];
+
+// One row of this case's execution history (across all cycles).
+export type CaseExecRow = {
+  id: string;
+  status: ExecutionStatus;
+  executedAt: string | null;
+  environment: string | null;
+  releaseVersion: string | null;
+  defectRef: string | null;
+  notes: string | null;
+  testerName: string | null;
+  cycleId: string;
+  cycleKey: string | null;
+  cycleName: string;
+};
 
 const STATUS_OPTS: Opt[] = [
   { value: "draft", label: "Draft" },
@@ -149,12 +166,14 @@ export function CaseDetail({
   suiteOptions,
   folderPath,
   users,
+  executions,
 }: {
   projectId: string;
   initial: CaseData;
   suiteOptions: Opt[];
   folderPath: string;
   users: CaseUser[];
+  executions: CaseExecRow[];
 }) {
   const [tab, setTab] = useState<Tab>("Details");
   const [c, setC] = useState<CaseData>(initial);
@@ -288,6 +307,11 @@ export function CaseDetail({
               }`}
             >
               {t}
+              {t === "Execution" && executions.length > 0 && (
+                <span className="ml-1.5 rounded bg-surface-muted px-1.5 py-0.5 text-[10px] text-subtle">
+                  {executions.length}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -296,7 +320,7 @@ export function CaseDetail({
       {/* Content */}
       <div className="min-h-0 flex-1 overflow-y-auto py-5">
         {tab === "Details" && (
-          <div className="max-w-5xl space-y-8">
+          <div className="space-y-8">
             <Section title="Description">
               <div className="space-y-4">
                 <div>
@@ -647,7 +671,80 @@ export function CaseDetail({
           </div>
         )}
 
-        {(tab === "Traceability" || tab === "Execution" || tab === "History") && (
+        {tab === "Execution" &&
+          (executions.length === 0 ? (
+            <div className="flex h-40 items-center justify-center text-sm text-subtle">
+              This case has not been added to any test cycle yet.
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-lg border border-line">
+              <table className="w-full text-sm">
+                <thead className="bg-surface-muted text-[11px] uppercase tracking-wide text-subtle">
+                  <tr>
+                    <th className="px-3 py-1.5 text-left font-semibold">Cycle</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Result</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Tester</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Executed</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Environment</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Version</th>
+                    <th className="px-2 py-1.5 text-left font-semibold">Defect</th>
+                    <th className="px-3 py-1.5 text-left font-semibold">Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {executions.map((e) => (
+                    <tr key={e.id} className="border-t border-line align-middle">
+                      <td className="max-w-[14rem] whitespace-nowrap px-3 py-1.5">
+                        <Link
+                          href={`/projects/${projectId}/cycles/${e.cycleKey ?? e.cycleId}`}
+                          className="block truncate text-fg hover:text-ring hover:underline"
+                          title={e.cycleName}
+                        >
+                          {e.cycleKey && (
+                            <span className="mr-1.5 font-mono text-xs text-subtle">
+                              {e.cycleKey}
+                            </span>
+                          )}
+                          {e.cycleName}
+                        </Link>
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <StatusBadge status={e.status} />
+                      </td>
+                      <td className="whitespace-nowrap px-2 py-1.5 text-muted">
+                        {e.testerName ?? "—"}
+                      </td>
+                      <td className="whitespace-nowrap px-2 py-1.5 text-muted">
+                        {e.executedAt
+                          ? new Date(e.executedAt).toLocaleDateString("en-GB", {
+                              day: "numeric",
+                              month: "short",
+                              year: "numeric",
+                            })
+                          : "—"}
+                      </td>
+                      <td className="whitespace-nowrap px-2 py-1.5 text-muted">
+                        {e.environment ?? "—"}
+                      </td>
+                      <td className="whitespace-nowrap px-2 py-1.5 text-muted">
+                        {e.releaseVersion ?? "—"}
+                      </td>
+                      <td className="whitespace-nowrap px-2 py-1.5 text-muted">
+                        {e.defectRef ?? "—"}
+                      </td>
+                      <td className="max-w-[16rem] px-3 py-1.5 text-muted">
+                        <span className="block truncate" title={e.notes ?? undefined}>
+                          {e.notes ?? "—"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+
+        {(tab === "Traceability" || tab === "History") && (
           <div className="flex h-full items-center justify-center py-16 text-sm text-subtle">
             {tab} — coming in a later phase.
           </div>

@@ -26,8 +26,8 @@ export async function createProject(
     data: {
       name: parsed.data.name,
       description: parsed.data.description || null,
-      // Creator is automatically a member.
-      members: { create: { userId: user.id } },
+      // Creator is automatically a member and administers their project.
+      members: { create: { userId: user.id, role: "admin" } },
     },
   });
 

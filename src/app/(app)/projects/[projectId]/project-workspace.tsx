@@ -3,12 +3,16 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { Priority, CaseType, CaseStatus } from "@prisma/client";
-import { PriorityBadge, CaseStatusBadge } from "@/components/ui";
+import type { Priority, CaseType, CaseStatus, ExecutionStatus } from "@prisma/client";
+import { PriorityFlag, CaseStatusBadge, StatusBadge } from "@/components/ui";
+import { RefreshButton } from "@/components/refresh-button";
+import { CaseFilterButton } from "./case-filter";
+import type { CaseFilter } from "@/lib/case-filters";
 import { NewCaseModal } from "./new-case-modal";
 import {
   moveCase,
   moveSuite,
+  reorderSuite,
   cloneCases,
   archiveCases,
   addSuite,
@@ -16,7 +20,7 @@ import {
   removeSuite,
 } from "@/lib/actions/workspace";
 
-export type WSuite = { id: string; name: string; parentSuiteId: string | null };
+export type WSuite = { id: string; name: string; parentSuiteId: string | null; position: number };
 export type WCase = {
   id: string;
   title: string;
@@ -26,6 +30,8 @@ export type WCase = {
   type: CaseType;
   status: CaseStatus;
   suiteId: string;
+  // Most recent recorded execution result across all cycles (null = never run).
+  lastResult: ExecutionStatus | null;
 };
 
 type Drag = { kind: "case"; id: string } | { kind: "suite"; id: string } | null;
@@ -84,12 +90,14 @@ function FolderInput({
 
 export function ProjectWorkspace({
   projectId,
-  suites,
+  suites: initialSuites,
   directCounts,
   archivedCount,
   initialCases,
   initialTotal,
   initialFolder,
+  canEdit = true,
+  canDelete = true,
 }: {
   projectId: string;
   suites: WSuite[];
@@ -98,9 +106,17 @@ export function ProjectWorkspace({
   initialCases: WCase[];
   initialTotal: number;
   initialFolder: string | null;
+  /** lead+ — authoring: create/rename/move/clone/archive. */
+  canEdit?: boolean;
+  /** admin — destructive deletes. */
+  canDelete?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  // Local copy of the folder tree so reorders apply instantly (optimistic),
+  // without waiting on a server refetch. Re-syncs when the server sends new data.
+  const [suites, setSuites] = useState<WSuite[]>(initialSuites);
+  useEffect(() => setSuites(initialSuites), [initialSuites]);
 
   // Case rows are fetched on demand (per folder + page); see load().
   const [rows, setRows] = useState<WCase[]>(initialCases);
@@ -115,6 +131,9 @@ export function ProjectWorkspace({
     field: null,
     dir: "asc",
   });
+  // Filter criteria (in-memory). Ref mirror so load() never reads a stale value.
+  const [filters, setFilters] = useState<CaseFilter[]>([]);
+  const filtersRef = useRef<CaseFilter[]>([]);
 
   const [selectedSuite, setSelectedSuite] = useState<string | null>(
     initialFolder && suites.some((s) => s.id === initialFolder)
@@ -127,7 +146,12 @@ export function ProjectWorkspace({
   // Collapsed by default (top-level folders only).
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(0);
-  const [dropTarget, setDropTarget] = useState<string | "root" | null>(null);
+  // Drop indicator: which folder (or "root") and where relative to it. "before"
+  // and "after" reorder within the level; "inside" nests (the old behavior).
+  type DropPos = "before" | "inside" | "after";
+  const [dropTarget, setDropTarget] = useState<
+    { id: string | "root"; pos: DropPos } | null
+  >(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
@@ -188,7 +212,9 @@ export function ProjectWorkspace({
       arr.push(s);
       m.set(s.parentSuiteId, arr);
     }
-    for (const arr of m.values()) arr.sort((a, b) => a.name.localeCompare(b.name));
+    // User-defined order (persisted `position`), name as a stable tiebreaker.
+    for (const arr of m.values())
+      arr.sort((a, b) => a.position - b.position || a.name.localeCompare(b.name));
     return m;
   }, [suites]);
 
@@ -253,6 +279,9 @@ export function ProjectWorkspace({
       params.set("sort", sort);
       params.set("dir", dir);
     }
+    if (filtersRef.current.length > 0) {
+      params.set("filters", JSON.stringify(filtersRef.current));
+    }
     try {
       const res = await fetch(
         `/api/projects/${projectId}/cases?${params.toString()}`,
@@ -297,6 +326,14 @@ export function ProjectWorkspace({
     load(selectedSuite, caseQuery, 0, field, dir);
   }
 
+  // Apply new filter criteria: mirror to the ref, reset to page 1, reload.
+  function onFiltersChange(next: CaseFilter[]) {
+    setFilters(next);
+    filtersRef.current = next;
+    setPage(0);
+    load(selectedSuite, caseQuery, 0);
+  }
+
   function toggleSelectAll() {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -330,18 +367,66 @@ export function ProjectWorkspace({
       router.refresh();
     });
   }
+  // Re-pull the current view (latest case data) + server folder tree/counts.
+  async function refresh() {
+    await load(selectedSuite, caseQuery, page);
+    router.refresh();
+  }
 
-  function onDropOnSuite(targetSuiteId: string, drag: Drag) {
+  // Optimistic folder reorder: recompute the moved folder's position locally
+  // (same gap logic as the server) and persist in the background. No refetch —
+  // the tree is client state, so the UI updates instantly.
+  function reorderFolder(
+    suiteId: string,
+    parentSuiteId: string | null,
+    beforeId: string | null
+  ) {
+    setSuites((prev) => {
+      const sibs = prev
+        .filter((s) => s.parentSuiteId === parentSuiteId && s.id !== suiteId)
+        .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name));
+      const idx = beforeId ? sibs.findIndex((s) => s.id === beforeId) : sibs.length;
+      const prevPos = idx > 0 ? sibs[idx - 1].position : null;
+      const nextPos = idx < sibs.length ? sibs[idx].position : null;
+      let newPos: number;
+      if (prevPos == null && nextPos == null) newPos = 0;
+      else if (prevPos == null) newPos = nextPos! - 10;
+      else if (nextPos == null) newPos = prevPos + 10;
+      else newPos = Math.floor((prevPos + nextPos) / 2);
+      return prev.map((s) =>
+        s.id === suiteId ? { ...s, parentSuiteId, position: newPos } : s
+      );
+    });
+    // Fire-and-forget; the server does the authoritative renormalize if needed.
+    reorderSuite(projectId, suiteId, parentSuiteId, beforeId).catch(() =>
+      router.refresh()
+    );
+  }
+
+  function onDropOnFolder(target: WSuite, pos: DropPos, drag: Drag) {
     if (!drag) return;
     if (drag.kind === "case") {
+      // Cases always land inside the folder (edge/center doesn't matter).
       const ids =
         selected.has(drag.id) && selected.size > 1 ? [...selected] : [drag.id];
       run(async () => {
-        await Promise.all(ids.map((id) => moveCase(projectId, id, targetSuiteId)));
+        await Promise.all(ids.map((id) => moveCase(projectId, id, target.id)));
         setSelected(new Set());
       });
-    } else if (drag.kind === "suite" && drag.id !== targetSuiteId) {
-      run(() => moveSuite(projectId, drag.id, targetSuiteId));
+    } else if (drag.kind === "suite" && drag.id !== target.id) {
+      if (pos === "inside") {
+        // Nest into the target folder (existing behavior).
+        run(() => moveSuite(projectId, drag.id, target.id));
+      } else {
+        // Reorder within the target's level: place before or after it.
+        const siblings = childrenOf.get(target.parentSuiteId) ?? [];
+        const idx = siblings.findIndex((s) => s.id === target.id);
+        const beforeId =
+          pos === "before"
+            ? target.id
+            : siblings[idx + 1]?.id ?? null; // "after" → before the next sibling, or append
+        reorderFolder(drag.id, target.parentSuiteId, beforeId);
+      }
     }
   }
 
@@ -404,7 +489,7 @@ export function ProjectWorkspace({
   function FolderNode({ suite, depth }: { suite: WSuite; depth: number }) {
     const kids = childrenOf.get(suite.id) ?? [];
     const isSelected = selectedSuite === suite.id;
-    const isDrop = dropTarget === suite.id;
+    const drop = dropTarget?.id === suite.id ? dropTarget.pos : null;
     // While searching, force branches open so matches are visible.
     const open = !!folderQuery.trim() || expanded.has(suite.id);
     const menuOpen = openMenu === suite.id;
@@ -433,7 +518,7 @@ export function ProjectWorkspace({
           />
         ) : (
           <div
-            draggable
+            draggable={canEdit}
             onDragStart={(e) => {
               e.stopPropagation();
               e.dataTransfer.setData(
@@ -445,16 +530,26 @@ export function ProjectWorkspace({
             onDragOver={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              setDropTarget(suite.id);
+              // Cursor in top/bottom quarter → reorder; middle → nest.
+              const r = e.currentTarget.getBoundingClientRect();
+              const y = (e.clientY - r.top) / r.height;
+              const pos: DropPos = y < 0.25 ? "before" : y > 0.75 ? "after" : "inside";
+              setDropTarget((d) =>
+                d?.id === suite.id && d.pos === pos ? d : { id: suite.id, pos }
+              );
             }}
-            onDragLeave={() => setDropTarget((d) => (d === suite.id ? null : d))}
+            onDragLeave={() =>
+              setDropTarget((d) => (d?.id === suite.id ? null : d))
+            }
             onDrop={(e) => {
               e.preventDefault();
               e.stopPropagation();
+              const pos = dropTarget?.id === suite.id ? dropTarget.pos : "inside";
               setDropTarget(null);
               try {
-                onDropOnSuite(
-                  suite.id,
+                onDropOnFolder(
+                  suite,
+                  pos,
                   JSON.parse(e.dataTransfer.getData("application/json"))
                 );
               } catch {}
@@ -465,7 +560,9 @@ export function ProjectWorkspace({
               isSelected
                 ? "bg-primary/10 text-fg"
                 : "text-muted hover:bg-surface-muted hover:text-fg"
-            } ${isDrop ? "ring-2 ring-ring ring-inset" : ""}`}
+            } ${drop === "inside" ? "ring-2 ring-ring ring-inset" : ""} ${
+              drop === "before" ? "border-t-2 border-ring" : ""
+            } ${drop === "after" ? "border-b-2 border-ring" : ""}`}
           >
             {kids.length > 0 ? (
               <button
@@ -572,38 +669,44 @@ export function ProjectWorkspace({
           onClick={(e) => e.stopPropagation()}
           className="absolute right-1 top-8 z-30 w-52 overflow-hidden rounded-lg border border-line bg-surface py-1 shadow-xl"
         >
-          <Item
-            onClick={() => {
-              setExpanded((p) => new Set(p).add(suite.id));
-              setCreating({ parent: suite.id });
-              setOpenMenu(null);
-            }}
-          >
-            Add subfolder
-          </Item>
-          <Item
-            onClick={() => {
-              setRenaming(suite.id);
-              setOpenMenu(null);
-            }}
-          >
-            Rename
-          </Item>
-          <Item
-            onClick={() => {
-              setOpenMenu(null);
-              if (
-                confirm(
-                  `Delete “${suite.name}” and all its subfolders and cases?`
-                )
-              ) {
-                run(() => removeSuite(projectId, suite.id));
-              }
-            }}
-          >
-            Delete
-          </Item>
-          <Divider />
+          {canEdit && (
+            <>
+              <Item
+                onClick={() => {
+                  setExpanded((p) => new Set(p).add(suite.id));
+                  setCreating({ parent: suite.id });
+                  setOpenMenu(null);
+                }}
+              >
+                Add subfolder
+              </Item>
+              <Item
+                onClick={() => {
+                  setRenaming(suite.id);
+                  setOpenMenu(null);
+                }}
+              >
+                Rename
+              </Item>
+            </>
+          )}
+          {canDelete && (
+            <Item
+              onClick={() => {
+                setOpenMenu(null);
+                if (
+                  confirm(
+                    `Delete “${suite.name}” and all its subfolders and cases?`
+                  )
+                ) {
+                  run(() => removeSuite(projectId, suite.id));
+                }
+              }}
+            >
+              Delete
+            </Item>
+          )}
+          {(canEdit || canDelete) && <Divider />}
           <Item
             onClick={() => {
               expandSubtree(suite.id, true);
@@ -707,12 +810,14 @@ export function ProjectWorkspace({
             </div>
           ) : (
             <>
-              <button
-                onClick={() => setCreating({ parent: null })}
-                className="h-8 shrink-0 rounded-md bg-primary px-3 text-xs font-medium text-primary-fg transition-all hover:opacity-90 active:scale-95"
-              >
-                + New Folder
-              </button>
+              {canEdit && (
+                <button
+                  onClick={() => setCreating({ parent: null })}
+                  className="h-8 shrink-0 rounded-md bg-primary px-3 text-xs font-medium text-primary-fg transition-all hover:opacity-90 active:scale-95"
+                >
+                  + New Folder
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setSearchOpen(true)}
@@ -743,9 +848,11 @@ export function ProjectWorkspace({
             onClick={() => selectFolder(null)}
             onDragOver={(e) => {
               e.preventDefault();
-              setDropTarget("root");
+              setDropTarget((d) =>
+                d?.id === "root" ? d : { id: "root", pos: "inside" }
+              );
             }}
-            onDragLeave={() => setDropTarget((d) => (d === "root" ? null : d))}
+            onDragLeave={() => setDropTarget((d) => (d?.id === "root" ? null : d))}
             onDrop={(e) => {
               e.preventDefault();
               setDropTarget(null);
@@ -758,7 +865,7 @@ export function ProjectWorkspace({
               selectedSuite === null
                 ? "bg-primary/10 text-fg"
                 : "text-fg hover:bg-surface-muted"
-            } ${dropTarget === "root" ? "ring-2 ring-ring ring-inset" : ""}`}
+            } ${dropTarget?.id === "root" ? "ring-2 ring-ring ring-inset" : ""}`}
           >
             <span>All test cases</span>
             <span className="text-xs font-normal text-subtle">
@@ -787,7 +894,9 @@ export function ProjectWorkspace({
 
           {roots.length === 0 && !creating && (
             <p className="px-2 py-3 text-xs text-subtle">
-              No folders yet. Create one to start.
+              {canEdit
+                ? "No folders yet. Create one to start."
+                : "No folders yet."}
             </p>
           )}
         </div>
@@ -839,7 +948,9 @@ export function ProjectWorkspace({
             placeholder="Search cases…"
             className="field h-8 w-44 px-2 py-1 text-xs"
           />
-          {!archivedView && (
+          <CaseFilterButton filters={filters} onChange={onFiltersChange} />
+          <RefreshButton onRefresh={refresh} title="Refresh cases" />
+          {!archivedView && canEdit && (
             <NewCaseModal
               projectId={projectId}
               suiteOptions={suites
@@ -856,18 +967,20 @@ export function ProjectWorkspace({
           <div className="flex items-center gap-2 border-b border-line bg-surface-muted px-3 py-2 text-sm">
             <span className="font-medium text-fg">{selected.size} selected</span>
             {archivedView ? (
-              <button
-                onClick={() =>
-                  run(async () => {
-                    await archiveCases(projectId, selectedIds, false);
-                    setSelected(new Set());
-                  })
-                }
-                className="rounded-md border border-line bg-surface px-2.5 py-1 text-xs font-medium text-fg transition-colors hover:bg-surface-muted"
-              >
-                Restore
-              </button>
-            ) : (
+              canEdit && (
+                <button
+                  onClick={() =>
+                    run(async () => {
+                      await archiveCases(projectId, selectedIds, false);
+                      setSelected(new Set());
+                    })
+                  }
+                  className="rounded-md border border-line bg-surface px-2.5 py-1 text-xs font-medium text-fg transition-colors hover:bg-surface-muted"
+                >
+                  Restore
+                </button>
+              )
+            ) : canEdit ? (
               <>
                 <button
                   onClick={() =>
@@ -892,7 +1005,7 @@ export function ProjectWorkspace({
                   Archive
                 </button>
               </>
-            )}
+            ) : null}
             <div className="relative">
               <button
                 onClick={() => setExportOpen((o) => !o)}
@@ -948,7 +1061,7 @@ export function ProjectWorkspace({
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-surface-muted text-xs uppercase tracking-wide text-subtle">
                 <tr>
-                  <th className="w-8 px-3 py-2">
+                  <th className="w-8 px-3 py-1.5">
                     <input
                       type="checkbox"
                       checked={allVisibleSelected}
@@ -958,13 +1071,16 @@ export function ProjectWorkspace({
                   </th>
                   {(
                     [
+                      ["priority", "P"],
                       ["key", "Key"],
                       ["title", "Name"],
-                      ["priority", "Priority"],
                       ["status", "Status"],
                     ] as [SortField, string][]
                   ).map(([field, label]) => (
-                    <th key={field} className="px-2 py-2 text-left font-semibold">
+                    <th
+                      key={field}
+                      className={`py-1.5 text-left font-semibold ${field === "priority" ? "w-8 px-2" : "px-2"}`}
+                    >
                       <button
                         onClick={() => onSort(field)}
                         className="inline-flex items-center gap-1 transition-colors hover:text-fg"
@@ -980,13 +1096,16 @@ export function ProjectWorkspace({
                       </button>
                     </th>
                   ))}
+                  <th className="px-2 py-1.5 text-left font-semibold">
+                    Last result
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((c) => (
 <tr
                     key={c.id}
-                    draggable={!archivedView}
+                    draggable={!archivedView && canEdit}
                     onDragStart={(e) => {
                       e.dataTransfer.setData(
                         "application/json",
@@ -998,7 +1117,7 @@ export function ProjectWorkspace({
                       selected.has(c.id) ? "bg-primary/5" : ""
                     }`}
                   >
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-1.5">
                       <input
                         type="checkbox"
                         checked={selected.has(c.id)}
@@ -1006,7 +1125,10 @@ export function ProjectWorkspace({
                         aria-label={`Select ${c.title}`}
                       />
                     </td>
-                    <td className="whitespace-nowrap px-2 py-2">
+                    <td className="px-2 py-1.5">
+                      <PriorityFlag priority={c.priority} />
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-1.5">
                       {c.key ?? c.sourceKey ? (
                         <Link
                           href={`/projects/${projectId}/cases/${c.key ?? c.id}`}
@@ -1018,7 +1140,7 @@ export function ProjectWorkspace({
                         <span className="font-mono text-xs text-subtle">—</span>
                       )}
                     </td>
-                    <td className="px-2 py-2">
+                    <td className="px-2 py-1.5">
                       <Link
                         href={`/projects/${projectId}/cases/${c.key ?? c.id}`}
                         className="text-fg hover:text-ring hover:underline"
@@ -1026,11 +1148,15 @@ export function ProjectWorkspace({
                         {c.title}
                       </Link>
                     </td>
-                    <td className="px-2 py-2">
-                      <PriorityBadge priority={c.priority} />
-                    </td>
-                    <td className="px-2 py-2">
+                    <td className="px-2 py-1.5">
                       <CaseStatusBadge status={c.status} />
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-1.5">
+                      {c.lastResult ? (
+                        <StatusBadge status={c.lastResult} />
+                      ) : (
+                        <span className="text-xs text-subtle">—</span>
+                      )}
                     </td>
                   </tr>
                 ))}

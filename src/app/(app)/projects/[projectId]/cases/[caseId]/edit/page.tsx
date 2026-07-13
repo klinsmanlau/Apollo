@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { requireUser } from "@/lib/auth";
+import { requireUser, getProjectRole, roleAtLeast } from "@/lib/auth";
 import { buildSuiteTree, flattenForSelect } from "@/lib/suites";
 import { updateCase } from "@/lib/actions/cases";
 import type { Step } from "@/lib/validation";
@@ -14,14 +14,13 @@ export default async function EditCasePage({
 }) {
   const { projectId, caseId } = await params;
   const user = await requireUser();
+  const myRole = await getProjectRole(projectId, user);
+  if (!myRole || !roleAtLeast(myRole, "lead")) notFound();
 
   const [testCase, suites] = await Promise.all([
     prisma.testCase.findFirst({
       where: {
-        suite: {
-          projectId,
-          project: { members: { some: { userId: user.id } } },
-        },
+        suite: { projectId },
         OR: [{ key: caseId }, { id: caseId }],
       },
     }),

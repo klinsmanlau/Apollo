@@ -1,5 +1,4 @@
-import { prisma } from "@/lib/prisma";
-import { requireUser } from "@/lib/auth";
+import { requireProjectRole } from "@/lib/auth";
 import { importCases } from "@/lib/import/run";
 
 // Node runtime (exceljs needs it); stream progress as newline-delimited JSON.
@@ -10,13 +9,12 @@ export async function POST(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
-  const user = await requireUser();
-
-  const member = await prisma.project.findFirst({
-    where: { id: projectId, members: { some: { userId: user.id } } },
-    select: { id: true },
-  });
-  if (!member) return new Response("Not found", { status: 404 });
+  let user;
+  try {
+    ({ user } = await requireProjectRole(projectId, "lead"));
+  } catch {
+    return new Response("Not found", { status: 404 });
+  }
 
   const form = await req.formData().catch(() => null);
   const file = form?.get("file");

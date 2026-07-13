@@ -96,6 +96,27 @@ export async function nextCaseKey(projectId: string): Promise<string> {
   return `${prefix}-T${p.caseSeq}`;
 }
 
+/**
+ * Atomically allocate `count` consecutive case keys in ONE round-trip.
+ * Returns e.g. ["TS-T11801", ..., "TS-T11850"]. Used for bulk case creation
+ * (DeviceCloud webhook) so we don't make N sequential updates.
+ */
+export async function nextCaseKeys(projectId: string, count: number): Promise<string[]> {
+  if (count <= 0) return [];
+  await ensureProjectKeying(projectId);
+  const p = await prisma.project.update({
+    where: { id: projectId },
+    data: { caseSeq: { increment: count } },
+    select: { caseSeq: true, keyPrefix: true, name: true },
+  });
+  const prefix = p.keyPrefix ?? deriveDefaultPrefix(p.name);
+  // caseSeq is now the LAST allocated number; the block is [end-count+1 .. end].
+  const end = p.caseSeq;
+  const keys: string[] = [];
+  for (let n = end - count + 1; n <= end; n++) keys.push(`${prefix}-T${n}`);
+  return keys;
+}
+
 /** Atomically allocate the next test-cycle key for a project (e.g. TS-R96). */
 export async function nextCycleKey(projectId: string): Promise<string> {
   await ensureProjectKeying(projectId);

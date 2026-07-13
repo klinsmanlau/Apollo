@@ -38,26 +38,26 @@ function caseData(pc: ParsedCase, suiteId: string) {
 }
 
 /**
- * Parse a Zephyr workbook and import its cases, creating nested suites as
- * needed and upserting cases by sourceKey. Reports progress through the
- * callbacks so the caller can stream it to the client.
+ * Persist a batch of parsed cases: create nested suites as needed and upsert
+ * cases by sourceKey (Zephyr key stays authoritative). Shared by the .xlsx
+ * importer and the Zephyr API sync so both update the same rows. Reports
+ * progress through the callbacks so the caller can stream it.
  */
-export async function importCases(opts: {
+export async function persistCases(opts: {
   projectId: string;
   userId: string;
-  buffer: ArrayBuffer | Buffer;
+  cases: ParsedCase[];
   onStart?: (total: number) => void;
   onProgress?: (done: number, total: number) => void;
-}): Promise<ImportSummary> {
-  const parsed = await parseZephyrWorkbook(opts.buffer);
-  const total = parsed.cases.length;
+}): Promise<Omit<ImportSummary, "skipped" | "unmappedHeaders">> {
+  const total = opts.cases.length;
   opts.onStart?.(total);
 
-  // Establish the project's key prefix/sequence from the file's Zephyr keys
+  // Establish the project's key prefix/sequence from the incoming Zephyr keys
   // (only if not already set), so generated keys stay consistent.
   await initProjectKeyingFromKeys(
     opts.projectId,
-    parsed.cases.map((c) => c.sourceKey)
+    opts.cases.map((c) => c.sourceKey)
   );
 
   const suiteCache = new Map<string, string>();
@@ -96,7 +96,7 @@ export async function importCases(opts: {
     return parentId as string;
   }
 
-  for (const pc of parsed.cases) {
+  for (const pc of opts.cases) {
     const suiteId = await ensureSuitePath(pc.folderPath);
     const data = caseData(pc, suiteId);
 
@@ -132,12 +132,31 @@ export async function importCases(opts: {
   // Keep the counter past the highest imported number.
   await bumpCaseSeqToMax(opts.projectId);
 
+  return { created, updated, suitesCreated, total };
+}
+
+/**
+ * Parse a Zephyr workbook and import its cases (via persistCases). Reports
+ * progress through the callbacks so the caller can stream it to the client.
+ */
+export async function importCases(opts: {
+  projectId: string;
+  userId: string;
+  buffer: ArrayBuffer | Buffer;
+  onStart?: (total: number) => void;
+  onProgress?: (done: number, total: number) => void;
+}): Promise<ImportSummary> {
+  const parsed = await parseZephyrWorkbook(opts.buffer);
+  const summary = await persistCases({
+    projectId: opts.projectId,
+    userId: opts.userId,
+    cases: parsed.cases,
+    onStart: opts.onStart,
+    onProgress: opts.onProgress,
+  });
   return {
-    created,
-    updated,
-    suitesCreated,
+    ...summary,
     skipped: parsed.skipped,
     unmappedHeaders: parsed.unmappedHeaders,
-    total,
   };
 }

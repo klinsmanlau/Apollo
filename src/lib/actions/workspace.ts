@@ -2,17 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireUser } from "@/lib/auth";
+import { requireProjectRole } from "@/lib/auth";
 import type { Prisma } from "@prisma/client";
 import { nextCaseKey, parseKey } from "@/lib/keys";
-
-async function assertMember(projectId: string, userId: string) {
-  const p = await prisma.project.findFirst({
-    where: { id: projectId, members: { some: { userId } } },
-    select: { id: true },
-  });
-  if (!p) throw new Error("Forbidden");
-}
 
 /** Move a single case into a different suite (drag-drop onto a folder). */
 export async function moveCase(
@@ -20,8 +12,7 @@ export async function moveCase(
   caseId: string,
   targetSuiteId: string
 ) {
-  const user = await requireUser();
-  await assertMember(projectId, user.id);
+  await requireProjectRole(projectId, "lead");
 
   const [suite, tc] = await Promise.all([
     prisma.testSuite.findFirst({
@@ -48,8 +39,7 @@ export async function moveSuite(
   suiteId: string,
   parentSuiteId: string | null
 ) {
-  const user = await requireUser();
-  await assertMember(projectId, user.id);
+  await requireProjectRole(projectId, "lead");
   if (suiteId === parentSuiteId) throw new Error("Cannot nest a folder into itself");
 
   const suites = await prisma.testSuite.findMany({
@@ -92,10 +82,89 @@ export async function moveSuite(
   revalidatePath(`/projects/${projectId}`);
 }
 
+/**
+ * Reorder a folder within a level: move `suiteId` under `parentSuiteId` and
+ * place it immediately before `beforeSuiteId` (or at the end when null).
+ * Renormalizes the target level's positions to 0,10,20… in one pass.
+ */
+export async function reorderSuite(
+  projectId: string,
+  suiteId: string,
+  parentSuiteId: string | null,
+  beforeSuiteId: string | null
+) {
+  await requireProjectRole(projectId, "lead");
+  if (suiteId === parentSuiteId) throw new Error("Cannot nest a folder into itself");
+  if (suiteId === beforeSuiteId) return; // dropping onto itself → no-op
+
+  const suites = await prisma.testSuite.findMany({
+    where: { projectId },
+    select: { id: true, parentSuiteId: true, position: true, name: true },
+  });
+  const self = suites.find((s) => s.id === suiteId);
+  if (!self) throw new Error("Not found");
+
+  // Prevent moving a folder into its own subtree (cycle).
+  const childrenOf = new Map<string | null, string[]>();
+  for (const s of suites) {
+    const arr = childrenOf.get(s.parentSuiteId) ?? [];
+    arr.push(s.id);
+    childrenOf.set(s.parentSuiteId, arr);
+  }
+  const descendants = new Set<string>();
+  const stack = [suiteId];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    for (const ch of childrenOf.get(cur) ?? []) {
+      if (!descendants.has(ch)) {
+        descendants.add(ch);
+        stack.push(ch);
+      }
+    }
+  }
+  if (parentSuiteId && descendants.has(parentSuiteId)) {
+    throw new Error("Cannot move a folder into its own subfolder");
+  }
+
+  // Siblings at the destination level (excluding the dragged folder), ordered.
+  const siblings = suites
+    .filter((s) => s.parentSuiteId === parentSuiteId && s.id !== suiteId)
+    .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name));
+
+  // Find where the dragged folder is being inserted, then give it a position
+  // BETWEEN its new neighbors (gap/fractional positioning) — so we only write
+  // the one moved row, not the whole level. Positions can be non-contiguous.
+  const idx = beforeSuiteId ? siblings.findIndex((s) => s.id === beforeSuiteId) : siblings.length;
+  const prevPos = idx > 0 ? siblings[idx - 1].position : null; // folder above the slot
+  const nextPos = idx < siblings.length ? siblings[idx].position : null; // folder below
+
+  let newPos: number;
+  if (prevPos == null && nextPos == null) newPos = 0; // only child
+  else if (prevPos == null) newPos = nextPos! - 10; // dropped at the top
+  else if (nextPos == null) newPos = prevPos + 10; // dropped at the bottom
+  else newPos = Math.floor((prevPos + nextPos) / 2); // between two folders (Int column)
+
+  const data: { position: number; parentSuiteId?: string | null } = { position: newPos };
+  if (self.parentSuiteId !== parentSuiteId) data.parentSuiteId = parentSuiteId;
+
+  // One UPDATE regardless of how many siblings exist.
+  await prisma.testSuite.update({ where: { id: suiteId }, data });
+
+  // If two neighbors collided (gap exhausted to <1), renormalize this level.
+  if (prevPos != null && nextPos != null && nextPos - prevPos <= 1) {
+    const level = [...siblings];
+    level.splice(idx, 0, { ...self, position: newPos });
+    await prisma.$transaction(
+      level.map((s, i) =>
+        prisma.testSuite.update({ where: { id: s.id }, data: { position: i * 100 } })
+      )
+    );
+  }
+}
+
 /** Duplicate the given cases within their current suites. */
 export async function cloneCases(projectId: string, caseIds: string[]) {
-  const user = await requireUser();
-  await assertMember(projectId, user.id);
+  const { user } = await requireProjectRole(projectId, "lead");
   if (caseIds.length === 0) return { cloned: 0 };
 
   const cases = await prisma.testCase.findMany({
@@ -141,8 +210,7 @@ export async function addSuite(
   name: string,
   parentSuiteId: string | null
 ) {
-  const user = await requireUser();
-  await assertMember(projectId, user.id);
+  await requireProjectRole(projectId, "lead");
   const clean = name.trim();
   if (!clean) throw new Error("Folder name is required");
 
@@ -168,8 +236,7 @@ export async function renameSuite(
   suiteId: string,
   name: string
 ) {
-  const user = await requireUser();
-  await assertMember(projectId, user.id);
+  await requireProjectRole(projectId, "lead");
   const clean = name.trim();
   if (!clean) throw new Error("Folder name is required");
 
@@ -180,10 +247,9 @@ export async function renameSuite(
   revalidatePath(`/projects/${projectId}`);
 }
 
-/** Delete a folder (cascades to subfolders and their cases). */
+/** Delete a folder (cascades to subfolders and their cases). Admin only. */
 export async function removeSuite(projectId: string, suiteId: string) {
-  const user = await requireUser();
-  await assertMember(projectId, user.id);
+  await requireProjectRole(projectId, "admin");
   const suite = await prisma.testSuite.findFirst({
     where: { id: suiteId, projectId },
     select: { id: true },
@@ -199,8 +265,7 @@ export async function archiveCases(
   caseIds: string[],
   archived: boolean
 ) {
-  const user = await requireUser();
-  await assertMember(projectId, user.id);
+  await requireProjectRole(projectId, "lead");
   if (caseIds.length === 0) return { updated: 0 };
 
   const res = await prisma.testCase.updateMany({

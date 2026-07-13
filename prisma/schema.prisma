@@ -35,6 +35,8 @@ model User {
   memberships    ProjectMember[]
   createdCases   TestCase[]      @relation("CaseCreatedBy")
   executions     TestExecution[] @relation("ExecutedBy")
+  attachments    Attachment[]    @relation("UploadedBy")
+  assignedExecutions TestExecution[] @relation("AssignedTo")
 
   @@index([email])
 }
@@ -57,11 +59,14 @@ model Project {
   cycleFolders CycleFolder[]
 }
 
-// Join table: User <-> Project (many-to-many) with a per-project role hook.
+// Join table: User <-> Project (many-to-many) with a per-project role.
+// `User.role == admin` acts as a global-admin bypass; everyone else gets
+// their capabilities from this per-project role.
 model ProjectMember {
   id        String   @id @default(cuid())
   projectId String
   userId    String
+  role      Role     @default(tester)
   createdAt DateTime @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -80,6 +85,8 @@ model TestSuite {
   projectId     String
   parentSuiteId String?
   name          String
+  // User-defined ordering among siblings (lower = higher in the list).
+  position      Int      @default(0)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -90,13 +97,13 @@ model TestSuite {
 
   @@index([projectId])
   @@index([parentSuiteId])
+  @@index([parentSuiteId, position])
 }
 
 enum Priority {
   low
   medium
   high
-  critical
 }
 
 enum CaseType {
@@ -169,9 +176,10 @@ model TestCase {
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
 
-  suite      TestSuite       @relation(fields: [suiteId], references: [id], onDelete: Cascade)
-  createdBy  User?           @relation("CaseCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  executions TestExecution[]
+  suite       TestSuite       @relation(fields: [suiteId], references: [id], onDelete: Cascade)
+  createdBy   User?           @relation("CaseCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  executions  TestExecution[]
+  attachmentFiles Attachment[]
 
   @@index([suiteId])
   @@index([tags])
@@ -202,6 +210,8 @@ model TestRun {
   startDate   DateTime?
   endDate     DateTime?
   customFields Json     @default("{}")
+  // Source run id (e.g. DeviceCloud upload_id) for webhook idempotency.
+  externalRunId String? @unique
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -265,6 +275,9 @@ model TestExecution {
   environment    String?
   iteration      String?
   releaseVersion String?
+  // Assignee: FK is authoritative; `assignedToName` is kept denormalized for
+  // display and for legacy rows imported before the FK existed.
+  assignedToId   String?
   assignedToName String?
   actualTime     Int? // seconds spent executing
   createdAt      DateTime        @default(now())
@@ -273,11 +286,43 @@ model TestExecution {
   run        TestRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
   case       TestCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
   executedBy User?    @relation("ExecutedBy", fields: [executedById], references: [id], onDelete: SetNull)
+  assignedTo User?    @relation("AssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  attachmentFiles Attachment[]
 
   // One execution row per (run, case).
   @@unique([runId, caseId])
   @@index([caseId])
   @@index([status])
+  @@index([assignedToId, status])
+  // Per-case execution history, newest first.
+  @@index([caseId, executedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Attachments (screenshots / logs on executions and cases)
+// ---------------------------------------------------------------------------
+
+// File bytes live in Postgres (`data`) so no extra storage service is needed.
+// If this outgrows the DB, swap `data` for an object-store path — the routes
+// are the only readers. NOTE: never select `data` in list queries.
+model Attachment {
+  id           String   @id @default(cuid())
+  // Exactly one of these is set (execution or case attachment).
+  executionId  String?
+  caseId       String?
+  fileName     String
+  mimeType     String
+  size         Int // bytes
+  data         Bytes
+  uploadedById String?
+  createdAt    DateTime @default(now())
+
+  execution  TestExecution? @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  case       TestCase?      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  uploadedBy User?          @relation("UploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([executionId])
+  @@index([caseId])
 }
 
 // ---------------------------------------------------------------------------

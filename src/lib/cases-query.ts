@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
+import type { ExecutionStatus } from "@prisma/client";
+import { buildFilterWhere, type CaseFilter } from "@/lib/case-filters";
 
 export const CASE_PAGE_SIZE = 50;
 
@@ -55,12 +57,13 @@ export async function getSubtreeIds(
   return [...out];
 }
 
-/** Build the Prisma where-clause for a scope + optional search term. */
+/** Build the Prisma where-clause for a scope + optional search term + filters. */
 export async function buildCaseWhere(
   projectId: string,
   scope: CaseScope,
   q?: string,
-  opts?: CaseWhereOpts
+  opts?: CaseWhereOpts,
+  filters?: CaseFilter[]
 ): Promise<Prisma.TestCaseWhereInput> {
   const where: Prisma.TestCaseWhereInput = {
     // Enforce project membership inside the query when a clerk id is given,
@@ -80,14 +83,26 @@ export async function buildCaseWhere(
   } else if (scope.suiteId) {
     where.suiteId = { in: await getSubtreeIds(projectId, scope.suiteId) };
   }
+
+  // Collect independent predicates that must all hold, AND-ed together. This
+  // keeps the search-term OR and the filter fragment from clobbering each other.
+  const and: Prisma.TestCaseWhereInput[] = [];
   const term = q?.trim();
   if (term) {
-    where.OR = [
-      { title: { contains: term, mode: "insensitive" } },
-      { key: { contains: term, mode: "insensitive" } },
-      { sourceKey: { contains: term, mode: "insensitive" } },
-    ];
+    and.push({
+      OR: [
+        { title: { contains: term, mode: "insensitive" } },
+        { key: { contains: term, mode: "insensitive" } },
+        { sourceKey: { contains: term, mode: "insensitive" } },
+      ],
+    });
   }
+  if (filters && filters.length > 0) {
+    const filterWhere = buildFilterWhere(filters);
+    if (filterWhere) and.push(filterWhere);
+  }
+  if (and.length > 0) where.AND = and;
+
   return where;
 }
 
@@ -121,9 +136,10 @@ export async function queryCasePage(
   page: number,
   sort?: SortField,
   dir: SortDir = "asc",
-  opts?: CaseWhereOpts
+  opts?: CaseWhereOpts,
+  filters?: CaseFilter[]
 ) {
-  const where = await buildCaseWhere(projectId, scope, q, opts);
+  const where = await buildCaseWhere(projectId, scope, q, opts, filters);
   const [cases, total] = await Promise.all([
     prisma.testCase.findMany({
       where,
@@ -134,7 +150,33 @@ export async function queryCasePage(
     }),
     prisma.testCase.count({ where }),
   ]);
-  return { cases, total };
+  const lastResults = await lastResultFor(cases.map((c) => c.id));
+  return {
+    cases: cases.map((c) => ({
+      ...c,
+      lastResult: lastResults.get(c.id) ?? null,
+    })),
+    total,
+  };
+}
+
+/**
+ * Most recent recorded result per case (one DISTINCT ON query for the page's
+ * ids — uses the (caseId, executedAt) index).
+ */
+async function lastResultFor(
+  caseIds: string[]
+): Promise<Map<string, ExecutionStatus>> {
+  const out = new Map<string, ExecutionStatus>();
+  if (caseIds.length === 0) return out;
+  const rows = await prisma.$queryRaw<{ caseId: string; status: ExecutionStatus }[]>`
+    SELECT DISTINCT ON ("caseId") "caseId", "status"
+    FROM "TestExecution"
+    WHERE "caseId" IN (${Prisma.join(caseIds)}) AND "executedAt" IS NOT NULL
+    ORDER BY "caseId", "executedAt" DESC
+  `;
+  for (const r of rows) out.set(r.caseId, r.status);
+  return out;
 }
 
 /** Direct (non-inclusive) active-case count per suite, via one aggregate. */

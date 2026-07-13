@@ -82,9 +82,20 @@ src/
 
 ## Roles
 
-`admin > lead > tester > viewer` (see `hasRole` in `src/lib/auth.ts`). New users
-default to `tester`. Role enforcement beyond membership is a Phase 1.x follow-up
-— set roles directly in the DB (`npm run db:studio`) for now.
+Roles are **per project**, on `ProjectMember.role`: `admin > lead > tester > viewer`
+(enforced server-side by `requireProjectRole` in `src/lib/auth.ts`).
+
+| Role | Can do |
+|---|---|
+| `viewer` | Read everything, export |
+| `tester` | + record execution results (Test Player) |
+| `lead` | + author cases/suites/cycles, clone, archive, import |
+| `admin` | + delete suites/cases/cycles/folders, manage members |
+
+Manage members and roles in the project's **Members** tab (project admins only;
+people must sign in once before they can be added). The project creator becomes
+its admin automatically. `User.role == admin` is a global-admin bypass that
+grants admin in every project.
 
 ## Data model note (RLS)
 
@@ -111,10 +122,38 @@ Project detail page → **Import .xlsx** (`/projects/<id>/import`). Upload a
 Parser: `src/lib/import/zephyr.ts` · action: `src/lib/actions/import.ts`.
 Uses `exceljs` to read the workbook server-side.
 
+## DeviceCloud CI integration (webhook)
+
+When a DeviceCloud run finishes, it can POST an `upload.completed` webhook to
+Apollo, which turns the run into a **test cycle** automatically.
+
+**Configure it:**
+1. Set `DEVICECLOUD_WEBHOOK_SECRET` in `.env` (any strong string).
+2. In the DeviceCloud console → Webhooks, add an endpoint:
+   `https://<your-app>/api/webhooks/devicecloud/<projectId>` and set its secret
+   to the same value (DeviceCloud sends it as `X-DeviceCloud-Secret`).
+
+**What Apollo does on receipt** (`src/app/api/webhooks/devicecloud/[projectId]`):
+- Verifies the secret, then creates a cycle (`TS-R#`, status Done) under an
+  **Automated** folder, named/environment from the device + date, linking the
+  `console_url`.
+- Creates one execution per flow in `results[]`: **Pass/Fail** from its status,
+  with the **`failReason` saved as the execution note**. Flows are matched to a
+  case by the key in the flow name (e.g. `TS-T7060 …`); unmatched flows are
+  auto-created under an **Automated** suite. Idempotent on `upload_id`.
+
 ## Roadmap (from the spec)
 
 - **Phase 1 (this scaffold):** auth, projects, suites, case authoring, Zephyr .xlsx import ✅
-  - Next up in Phase 1: run creation, execution screen, dashboard, CSV export
+  - Also done: per-project roles + Members tab, cycle results export
+    (.xlsx/.csv from the cycle detail header), execution **attachments**
+    (screenshots/logs in the Test Player — drop, paste, or browse; max 5 MB
+    per file, stored in Postgres, served via
+    `/api/projects/<id>/attachments/<id>`), real **assignment**
+    (`TestExecution.assignedToId` FK; the Test Player assignee picker is
+    keyed by user), a **My Work** tab (open executions assigned to you,
+    grouped by cycle), per-case **execution history** (Execution tab on the
+    case detail) and a **Last result** column in the case library
 - **Phase 2:** Jira / GitHub issue linking, CI result webhook, Slack notifications
 - **Phase 3:** trend charts, saved views, attachments, flaky-test flag
 ```

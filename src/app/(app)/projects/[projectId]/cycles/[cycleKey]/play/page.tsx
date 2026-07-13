@@ -36,6 +36,10 @@ export default async function PlayerPage({
               },
             },
             executedBy: { select: { name: true, email: true } },
+            attachmentFiles: {
+              select: { id: true, fileName: true, mimeType: true, size: true },
+              orderBy: { createdAt: "asc" },
+            },
           },
           orderBy: { createdAt: "asc" },
         },
@@ -66,6 +70,7 @@ export default async function PlayerPage({
       environment: e.environment,
       iteration: e.iteration,
       releaseVersion: e.releaseVersion,
+      assignedToId: e.assignedToId,
       assignedToName: e.assignedToName,
       actualTime: e.actualTime,
       executedByName: e.executedBy?.name ?? e.executedBy?.email ?? null,
@@ -79,6 +84,7 @@ export default async function PlayerPage({
       casePreconditions: e.case.preconditions,
       caseSteps: (e.case.steps as unknown as Step[]) ?? [],
       caseEstimatedTime: e.case.estimatedTime,
+      attachments: e.attachmentFiles,
     })),
   };
 
@@ -88,6 +94,7 @@ export default async function PlayerPage({
         projectId={projectId}
         cycleKey={cycleKey}
         data={data}
+        currentUserId={user.id}
         currentUserName={user.name ?? user.email}
       />
     </div>

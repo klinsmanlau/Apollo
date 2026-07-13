@@ -2,6 +2,7 @@ import { Webhook } from "svix";
 import { headers } from "next/headers";
 import type { WebhookEvent } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
+import { ensureMemberOfAllProjects } from "@/lib/onboarding";
 
 /**
  * Clerk webhook: keeps the local `User` table in sync with Clerk identities.
@@ -47,11 +48,14 @@ export async function POST(req: Request) {
 
       const name = [first_name, last_name].filter(Boolean).join(" ") || null;
 
-      await prisma.user.upsert({
+      const user = await prisma.user.upsert({
         where: { clerkUserId: id },
         update: { email, name },
         create: { clerkUserId: id, email, name },
+        select: { id: true },
       });
+      // Internal-team model: every account belongs to all projects.
+      await ensureMemberOfAllProjects(user.id);
       break;
     }
     case "user.deleted": {

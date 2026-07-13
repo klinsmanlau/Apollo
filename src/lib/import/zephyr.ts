@@ -7,7 +7,7 @@ export type ParsedCase = {
   objective: string | null;
   preconditions: string | null;
   folderPath: string[];
-  priority: "low" | "medium" | "high" | "critical";
+  priority: "low" | "medium" | "high";
   status: "draft" | "approved" | "deprecated";
   component: string | null;
   ownerName: string | null;
@@ -49,16 +49,17 @@ const KNOWN_HEADERS = new Set(
   ].map((h) => h.toLowerCase())
 );
 
-const PRIORITY_MAP: Record<string, ParsedCase["priority"]> = {
+export const PRIORITY_MAP: Record<string, ParsedCase["priority"]> = {
   low: "low",
   normal: "medium",
   medium: "medium",
   high: "high",
-  critical: "critical",
-  highest: "critical",
+  // Apollo has no "critical" tier — Zephyr Critical/Highest fold into High.
+  critical: "high",
+  highest: "high",
 };
 
-const STATUS_MAP: Record<string, ParsedCase["status"]> = {
+export const STATUS_MAP: Record<string, ParsedCase["status"]> = {
   draft: "draft",
   approved: "approved",
   deprecated: "deprecated",

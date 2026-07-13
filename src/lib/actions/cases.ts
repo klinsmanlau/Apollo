@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { requireUser } from "@/lib/auth";
+import { requireProjectRole } from "@/lib/auth";
 import { caseSchema, type Step } from "@/lib/validation";
 import { nextCaseKey, parseKey } from "@/lib/keys";
 import type { Prisma } from "@prisma/client";
@@ -76,13 +76,25 @@ export async function createCase(
   _prev: FormState,
   formData: FormData
 ): Promise<FormState> {
-  const user = await requireUser();
   const projectId = String(formData.get("projectId"));
+  let user;
+  try {
+    ({ user } = await requireProjectRole(projectId, "lead"));
+  } catch {
+    return { error: "You need the lead role to create test cases" };
+  }
 
   const parsed = parseCaseForm(formData);
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
+
+  // The target suite must belong to this project (suiteId comes from the form).
+  const suite = await prisma.testSuite.findFirst({
+    where: { id: parsed.data.suiteId, projectId },
+    select: { id: true },
+  });
+  if (!suite) return { error: "Folder not found" };
 
   const key = await nextCaseKey(projectId);
   await prisma.testCase.create({
@@ -102,14 +114,31 @@ export async function updateCase(
   _prev: FormState,
   formData: FormData
 ): Promise<FormState> {
-  await requireUser();
   const projectId = String(formData.get("projectId"));
   const caseId = String(formData.get("caseId"));
+  try {
+    await requireProjectRole(projectId, "lead");
+  } catch {
+    return { error: "You need the lead role to edit test cases" };
+  }
 
   const parsed = parseCaseForm(formData);
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
+
+  // Both the case and the (possibly new) suite must belong to this project.
+  const [existing, suite] = await Promise.all([
+    prisma.testCase.findFirst({
+      where: { id: caseId, suite: { projectId } },
+      select: { id: true },
+    }),
+    prisma.testSuite.findFirst({
+      where: { id: parsed.data.suiteId, projectId },
+      select: { id: true },
+    }),
+  ]);
+  if (!existing || !suite) return { error: "Not found" };
 
   const updated = await prisma.testCase.update({
     where: { id: caseId },
@@ -130,15 +159,16 @@ export async function autosaveCase(
   caseId: string,
   patch: Record<string, unknown>
 ): Promise<{ ok: true } | { error: string }> {
-  const user = await requireUser();
   const existing = await prisma.testCase.findFirst({
-    where: {
-      id: caseId,
-      suite: { project: { members: { some: { userId: user.id } } } },
-    },
+    where: { id: caseId },
     select: { id: true, suite: { select: { projectId: true } } },
   });
   if (!existing) return { error: "Not found" };
+  try {
+    await requireProjectRole(existing.suite.projectId, "lead");
+  } catch {
+    return { error: "You need the lead role to edit test cases" };
+  }
 
   const data: Record<string, unknown> = {};
   // Nullable string fields.
@@ -181,12 +211,15 @@ export async function autosaveCase(
 }
 
 export async function deleteCase(formData: FormData): Promise<void> {
-  await requireUser();
   const caseId = String(formData.get("caseId"));
   const projectId = String(formData.get("projectId"));
-  if (!caseId) return;
+  if (!caseId || !projectId) return;
+  await requireProjectRole(projectId, "admin");
 
-  await prisma.testCase.delete({ where: { id: caseId } });
+  // Scoped so a forged id can't delete another project's case.
+  await prisma.testCase.deleteMany({
+    where: { id: caseId, suite: { projectId } },
+  });
   revalidatePath(`/projects/${projectId}`);
   redirect(`/projects/${projectId}`);
 }

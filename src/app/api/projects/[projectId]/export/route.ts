@@ -8,7 +8,6 @@ const PRIORITY_OUT: Record<string, string> = {
   low: "Low",
   medium: "Normal",
   high: "High",
-  critical: "Critical",
 };
 const STATUS_OUT: Record<string, string> = {
   draft: "Draft",

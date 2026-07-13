@@ -2,17 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireUser } from "@/lib/auth";
+import { requireProjectRole } from "@/lib/auth";
 import { nextCycleKey, parseKey } from "@/lib/keys";
 import type { ExecutionStatus, CycleStatus, Prisma } from "@prisma/client";
-
-async function assertMember(projectId: string, userId: string) {
-  const p = await prisma.project.findFirst({
-    where: { id: projectId, members: { some: { userId } } },
-    select: { id: true },
-  });
-  if (!p) throw new Error("Forbidden");
-}
 
 // ---- Cycles ---------------------------------------------------------------
 
@@ -32,8 +24,7 @@ export async function createCycle(
     customFields?: Record<string, string>;
   }
 ): Promise<{ id: string; key: string | null }> {
-  const user = await requireUser();
-  await assertMember(projectId, user.id);
+  const { user } = await requireProjectRole(projectId, "lead");
   const key = await nextCycleKey(projectId);
   const run = await prisma.testRun.create({
     data: {
@@ -63,12 +54,16 @@ export async function autosaveCycle(
   cycleId: string,
   patch: Record<string, unknown>
 ): Promise<{ ok: true } | { error: string }> {
-  const user = await requireUser();
   const run = await prisma.testRun.findFirst({
-    where: { id: cycleId, project: { members: { some: { userId: user.id } } } },
+    where: { id: cycleId },
     select: { id: true, projectId: true },
   });
   if (!run) return { error: "Not found" };
+  try {
+    await requireProjectRole(run.projectId, "lead");
+  } catch {
+    return { error: "You need the lead role to edit cycles" };
+  }
 
   const data: Record<string, unknown> = {};
   if ("name" in patch) data.name = String(patch.name ?? "");
@@ -103,8 +98,7 @@ export async function autosaveCycle(
 }
 
 export async function cloneCycles(projectId: string, cycleIds: string[]) {
-  const user = await requireUser();
-  await assertMember(projectId, user.id);
+  const { user } = await requireProjectRole(projectId, "lead");
   for (const id of cycleIds) {
     const src = await prisma.testRun.findFirst({
       where: { id, projectId },
@@ -136,8 +130,7 @@ export async function cloneCycles(projectId: string, cycleIds: string[]) {
 }
 
 export async function deleteCycles(projectId: string, cycleIds: string[]) {
-  const user = await requireUser();
-  await assertMember(projectId, user.id);
+  await requireProjectRole(projectId, "admin");
   await prisma.testRun.deleteMany({
     where: { id: { in: cycleIds }, projectId },
   });
@@ -149,8 +142,7 @@ export async function moveCycle(
   cycleId: string,
   folderId: string | null
 ) {
-  const user = await requireUser();
-  await assertMember(projectId, user.id);
+  await requireProjectRole(projectId, "lead");
   if (folderId) {
     const f = await prisma.cycleFolder.findFirst({
       where: { id: folderId, projectId },
@@ -172,8 +164,7 @@ export async function addCycleFolder(
   name: string,
   parentFolderId: string | null
 ) {
-  const user = await requireUser();
-  await assertMember(projectId, user.id);
+  await requireProjectRole(projectId, "lead");
   const clean = name.trim();
   if (!clean) throw new Error("Folder name is required");
   const created = await prisma.cycleFolder.create({
@@ -189,20 +180,19 @@ export async function renameCycleFolder(
   folderId: string,
   name: string
 ) {
-  const user = await requireUser();
-  await assertMember(projectId, user.id);
+  await requireProjectRole(projectId, "lead");
   const clean = name.trim();
   if (!clean) throw new Error("Folder name is required");
-  await prisma.cycleFolder.update({
-    where: { id: folderId },
+  // Scoped so a forged id can't rename another project's folder.
+  await prisma.cycleFolder.updateMany({
+    where: { id: folderId, projectId },
     data: { name: clean },
   });
   revalidatePath(`/projects/${projectId}/cycles`);
 }
 
 export async function removeCycleFolder(projectId: string, folderId: string) {
-  const user = await requireUser();
-  await assertMember(projectId, user.id);
+  await requireProjectRole(projectId, "admin");
   const f = await prisma.cycleFolder.findFirst({
     where: { id: folderId, projectId },
     select: { id: true },
@@ -217,13 +207,13 @@ export async function moveCycleFolder(
   folderId: string,
   parentFolderId: string | null
 ) {
-  const user = await requireUser();
-  await assertMember(projectId, user.id);
+  await requireProjectRole(projectId, "lead");
   if (folderId === parentFolderId) throw new Error("Cannot nest into itself");
   const folders = await prisma.cycleFolder.findMany({
     where: { projectId },
     select: { id: true, parentFolderId: true },
   });
+  if (!folders.some((f) => f.id === folderId)) throw new Error("Not found");
   // Reject dropping into own subtree.
   const childrenOf = new Map<string | null, string[]>();
   for (const f of folders) {
@@ -254,21 +244,24 @@ export async function moveCycleFolder(
 // ---- Executions (results within a cycle) ---------------------------------
 
 export async function addCasesToCycle(cycleId: string, caseIds: string[]) {
-  const user = await requireUser();
   const run = await prisma.testRun.findFirst({
-    where: {
-      id: cycleId,
-      project: { members: { some: { userId: user.id } } },
-    },
+    where: { id: cycleId },
     select: { id: true, projectId: true },
   });
   if (!run) throw new Error("Forbidden");
+  await requireProjectRole(run.projectId, "lead");
   if (caseIds.length === 0) return { added: 0 };
 
+  // Only link cases that belong to the cycle's project.
+  const valid = await prisma.testCase.findMany({
+    where: { id: { in: caseIds }, suite: { projectId: run.projectId } },
+    select: { id: true },
+  });
+
   const res = await prisma.testExecution.createMany({
-    data: caseIds.map((caseId) => ({
+    data: valid.map((c) => ({
       runId: cycleId,
-      caseId,
+      caseId: c.id,
       status: "not_executed" as ExecutionStatus,
     })),
     skipDuplicates: true,
@@ -278,15 +271,12 @@ export async function addCasesToCycle(cycleId: string, caseIds: string[]) {
 }
 
 export async function removeExecution(executionId: string) {
-  const user = await requireUser();
   const ex = await prisma.testExecution.findFirst({
-    where: {
-      id: executionId,
-      run: { project: { members: { some: { userId: user.id } } } },
-    },
-    select: { id: true },
+    where: { id: executionId },
+    select: { id: true, run: { select: { projectId: true } } },
   });
   if (!ex) throw new Error("Forbidden");
+  await requireProjectRole(ex.run.projectId, "lead");
   await prisma.testExecution.delete({ where: { id: executionId } });
 }
 
@@ -300,25 +290,30 @@ export async function recordExecution(
     environment?: string;
     iteration?: string;
     releaseVersion?: string;
-    assignedToName?: string;
+    assignedToId?: string | null;
+    assignedToName?: string | null;
     actualTime?: number | null;
   }
 ): Promise<{ ok: true } | { error: string }> {
-  const user = await requireUser();
   const ex = await prisma.testExecution.findFirst({
-    where: {
-      id: executionId,
-      run: { project: { members: { some: { userId: user.id } } } },
-    },
-    select: { id: true },
+    where: { id: executionId },
+    select: { id: true, run: { select: { projectId: true } } },
   });
   if (!ex) return { error: "Not found" };
+  let user;
+  try {
+    ({ user } = await requireProjectRole(ex.run.projectId, "tester"));
+  } catch {
+    return { error: "You need the tester role to record results" };
+  }
 
   const data: Record<string, unknown> = {};
   if (patch.status) {
     data.status = patch.status;
     if (patch.status === "not_executed") {
+      // Reverting to not-executed clears who/when it was executed.
       data.executedAt = null;
+      data.executedById = null;
     } else {
       data.executedAt = new Date();
       data.executedById = user.id;
@@ -330,6 +325,22 @@ export async function recordExecution(
     data.stepResults = patch.stepResults as Prisma.InputJsonValue;
   for (const f of ["environment", "iteration", "releaseVersion", "assignedToName"] as const) {
     if (f in patch) data[f] = patch[f] ? String(patch[f]) : null;
+  }
+  // Assignee FK is authoritative: resolve the display name server-side from
+  // the project roster (overrides any assignedToName in the same patch).
+  if ("assignedToId" in patch) {
+    if (patch.assignedToId) {
+      const member = await prisma.projectMember.findFirst({
+        where: { projectId: ex.run.projectId, userId: patch.assignedToId },
+        select: { user: { select: { id: true, name: true, email: true } } },
+      });
+      if (!member) return { error: "Assignee is not a member of this project" };
+      data.assignedToId = member.user.id;
+      data.assignedToName = member.user.name ?? member.user.email;
+    } else {
+      data.assignedToId = null;
+      data.assignedToName = null;
+    }
   }
   if ("actualTime" in patch)
     data.actualTime = patch.actualTime == null ? null : Number(patch.actualTime);

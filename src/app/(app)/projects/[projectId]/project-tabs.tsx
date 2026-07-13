@@ -6,9 +6,17 @@ import { usePathname } from "next/navigation";
 export function ProjectTabs({ projectId }: { projectId: string }) {
   const path = usePathname();
   const onCycles = path.includes("/cycles");
+  const onMembers = path.includes("/members");
+  const onMyWork = path.includes("/my-work");
   const tabs = [
-    { href: `/projects/${projectId}`, label: "Test Cases", active: !onCycles },
+    {
+      href: `/projects/${projectId}`,
+      label: "Test Cases",
+      active: !onCycles && !onMembers && !onMyWork,
+    },
     { href: `/projects/${projectId}/cycles`, label: "Test Cycles", active: onCycles },
+    { href: `/projects/${projectId}/my-work`, label: "My Work", active: onMyWork },
+    { href: `/projects/${projectId}/members`, label: "Members", active: onMembers },
   ];
   return (
     <div className="flex shrink-0 gap-4 border-b border-line">

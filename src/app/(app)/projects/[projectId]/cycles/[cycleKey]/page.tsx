@@ -22,6 +22,8 @@ export default async function CycleRunPage({
           include: {
             case: { select: { id: true, key: true, title: true, priority: true } },
             executedBy: { select: { name: true, email: true } },
+            assignedTo: { select: { id: true, name: true, email: true } },
+            _count: { select: { attachmentFiles: true } },
           },
           orderBy: { createdAt: "asc" },
         },
@@ -84,8 +86,15 @@ export default async function CycleRunPage({
       caseKey: e.case.key,
       caseTitle: e.case.title,
       casePriority: e.case.priority,
-      executedByName: e.executedBy?.name ?? e.executedBy?.email ?? null,
+      // Only show an executor when the case was actually executed. (Guards
+      // against legacy rows that kept executedById after being reset.)
+      executedByName: e.executedAt
+        ? e.executedBy?.name ?? e.executedBy?.email ?? null
+        : null,
       executedAt: e.executedAt?.toISOString() ?? null,
+      assignedToId: e.assignedTo?.id ?? null,
+      assignedToName: e.assignedTo?.name ?? e.assignedTo?.email ?? null,
+      attachmentCount: e._count.attachmentFiles,
     })),
   };
 

@@ -11,6 +11,13 @@ import type { Step } from "@/lib/validation";
 
 type StepResult = { status: string };
 
+export type AttachmentMeta = {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+};
+
 export type PlayerExec = {
   id: string;
   status: ExecutionStatus;
@@ -20,6 +27,7 @@ export type PlayerExec = {
   environment: string | null;
   iteration: string | null;
   releaseVersion: string | null;
+  assignedToId: string | null;
   assignedToName: string | null;
   actualTime: number | null;
   executedByName: string | null;
@@ -33,6 +41,7 @@ export type PlayerExec = {
   casePreconditions: string | null;
   caseSteps: Step[];
   caseEstimatedTime: number | null;
+  attachments: AttachmentMeta[];
 };
 
 type GroupBy = "none" | "status" | "tester" | "environment" | "priority" | "component" | "folder";
@@ -52,13 +61,153 @@ export type PlayerData = {
   executions: PlayerExec[];
 };
 
-const PRIORITY_ORDER: Priority[] = ["critical", "high", "medium", "low"];
+const PRIORITY_ORDER: Priority[] = ["high", "medium", "low"];
 const PRIORITY_LABEL: Record<Priority, string> = {
-  critical: "Critical",
   high: "High",
   medium: "Medium",
   low: "Low",
 };
+
+function fmtSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+
+/** Upload + list attachments for one execution (file picker, drop, paste). */
+function AttachmentsSection({
+  projectId,
+  executionId,
+  items,
+  onChange,
+}: {
+  projectId: string;
+  executionId: string;
+  items: AttachmentMeta[];
+  onChange: (items: AttachmentMeta[]) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  async function upload(files: File[]) {
+    if (files.length === 0 || busy) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const form = new FormData();
+      for (const f of files) form.append("files", f);
+      const res = await fetch(
+        `/api/projects/${projectId}/executions/${executionId}/attachments`,
+        { method: "POST", body: form }
+      );
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(body?.error ?? "Upload failed");
+        return;
+      }
+      onChange([...items, ...(body.attachments as AttachmentMeta[])]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(id: string) {
+    onChange(items.filter((a) => a.id !== id));
+    await fetch(`/api/projects/${projectId}/attachments/${id}`, {
+      method: "DELETE",
+    });
+  }
+
+  const url = (id: string) => `/api/projects/${projectId}/attachments/${id}`;
+
+  return (
+    <div
+      onPaste={(e) => {
+        const files = Array.from(e.clipboardData?.files ?? []);
+        if (files.length > 0) {
+          e.preventDefault();
+          upload(files);
+        }
+      }}
+    >
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          upload(Array.from(e.target.files ?? []));
+          e.target.value = "";
+        }}
+      />
+
+      {items.length > 0 && (
+        <ul className="mb-3 flex flex-wrap gap-2">
+          {items.map((a) => (
+            <li key={a.id} className="group relative">
+              {a.mimeType.startsWith("image/") ? (
+                <a href={url(a.id)} target="_blank" rel="noreferrer" title={a.fileName}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={url(a.id)}
+                    alt={a.fileName}
+                    className="h-20 w-28 rounded-md border border-line object-cover transition-opacity hover:opacity-90"
+                  />
+                </a>
+              ) : (
+                <a
+                  href={url(a.id)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex h-20 w-28 flex-col justify-between rounded-md border border-line p-2 text-xs transition-colors hover:bg-surface-muted"
+                  title={a.fileName}
+                >
+                  <span className="line-clamp-2 break-all font-medium text-fg">
+                    {a.fileName}
+                  </span>
+                  <span className="text-subtle">{fmtSize(a.size)}</span>
+                </a>
+              )}
+              <button
+                onClick={() => remove(a.id)}
+                title="Remove attachment"
+                className="absolute -right-1.5 -top-1.5 hidden h-5 w-5 items-center justify-center rounded-full border border-line bg-surface text-[10px] text-subtle shadow-sm hover:text-red-500 group-hover:flex"
+              >
+                ✕
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div
+        onClick={() => inputRef.current?.click()}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          upload(Array.from(e.dataTransfer.files));
+        }}
+        className={`cursor-pointer rounded-lg border border-dashed py-5 text-center text-sm transition-colors ${
+          dragOver
+            ? "border-ring bg-primary/5 text-fg"
+            : "border-line text-subtle hover:border-ring hover:text-fg"
+        }`}
+      >
+        {busy
+          ? "Uploading…"
+          : "Drop files, paste a screenshot, or click to browse (max 5 MB)"}
+      </div>
+      {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
+    </div>
+  );
+}
 
 function fmt(sec: number | null): string {
   const s = sec ?? 0;
@@ -170,11 +319,13 @@ export function TestPlayer({
   projectId,
   cycleKey,
   data,
+  currentUserId,
   currentUserName,
 }: {
   projectId: string;
   cycleKey: string;
   data: PlayerData;
+  currentUserId: string;
   currentUserName: string;
 }) {
   const [execs, setExecs] = useState<PlayerExec[]>(data.executions);
@@ -188,10 +339,17 @@ export function TestPlayer({
   const [elapsed, setElapsed] = useState(data.executions[0]?.actualTime ?? 0);
   const cur = execs[idx];
 
-  const userOpts: Opt[] = data.users.map((u) => ({
-    value: u.name ?? u.email,
+  // Assignee select is keyed by user id (the FK); label is the display name.
+  const assigneeOpts: Opt[] = data.users.map((u) => ({
+    value: u.id,
     label: u.name ?? u.email,
   }));
+
+  // Legacy rows only carry a name — match by id first, then fall back.
+  const isMine = (e: PlayerExec) =>
+    e.assignedToId
+      ? e.assignedToId === currentUserId
+      : e.assignedToName === currentUserName;
 
   useEffect(() => {
     if (!running) return;
@@ -236,8 +394,9 @@ export function TestPlayer({
   }
 
   const assignedCount = useMemo(
-    () => execs.filter((e) => e.assignedToName === currentUserName).length,
-    [execs, currentUserName]
+    () => execs.filter(isMine).length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [execs, currentUserId, currentUserName]
   );
   const flat = useMemo(
     () =>
@@ -247,7 +406,7 @@ export function TestPlayer({
           !q ||
           e.caseTitle.toLowerCase().includes(q) ||
           (e.caseKey ?? "").toLowerCase().includes(q);
-        const okMine = !assignedToMe || e.assignedToName === currentUserName;
+        const okMine = !assignedToMe || isMine(e);
         return okSearch && okMine;
       }),
     [execs, search, assignedToMe, currentUserName]
@@ -294,10 +453,9 @@ export function TestPlayer({
   }
 
   const flagColor: Record<Priority, string> = {
-    critical: "text-red-600",
     high: "text-red-500",
-    medium: "text-amber-500",
-    low: "text-gray-400",
+    medium: "text-yellow-500",
+    low: "text-green-500",
   };
 
   return (
@@ -531,9 +689,17 @@ export function TestPlayer({
                   <div>
                     <label className={labelCls}>Assigned to</label>
                     <SelectField
-                      value={cur.assignedToName ?? ""}
-                      options={userOpts}
-                      onChange={(v) => patchExec(cur.id, { assignedToName: v || null })}
+                      value={cur.assignedToId ?? ""}
+                      options={assigneeOpts}
+                      onChange={(v) =>
+                        patchExec(cur.id, {
+                          assignedToId: v || null,
+                          // Optimistic label; the server re-derives it from the roster.
+                          assignedToName: v
+                            ? assigneeOpts.find((o) => o.value === v)?.label ?? null
+                            : null,
+                        })
+                      }
                       placeholder="Unassigned"
                       searchable
                     />
@@ -592,10 +758,20 @@ export function TestPlayer({
                 />
               </Section>
 
-              <Section title="Attachments" defaultOpen={false}>
-                <div className="rounded-lg border border-dashed border-line py-6 text-center text-sm text-subtle">
-                  Drop files to attach — coming soon
-                </div>
+              <Section
+                title={`Attachments${cur.attachments.length ? ` (${cur.attachments.length})` : ""}`}
+                defaultOpen={cur.attachments.length > 0}
+              >
+                <AttachmentsSection
+                  projectId={projectId}
+                  executionId={cur.id}
+                  items={cur.attachments}
+                  onChange={(items) =>
+                    setExecs((p) =>
+                      p.map((x) => (x.id === cur.id ? { ...x, attachments: items } : x))
+                    )
+                  }
+                />
               </Section>
 
               <Section title="Test Script">

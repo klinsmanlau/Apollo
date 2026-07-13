@@ -9,9 +9,6 @@ export default async function ProjectsPage() {
   const projects = await prisma.project.findMany({
     where: { members: { some: { userId: user.id } } },
     orderBy: { updatedAt: "desc" },
-    include: {
-      _count: { select: { suites: true, runs: true } },
-    },
   });
 
   return (
@@ -36,7 +33,7 @@ export default async function ProjectsPage() {
             >
               <Link
                 href={`/projects/${p.id}`}
-                className="themed block rounded-xl border border-line bg-surface p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-ring/40 hover:shadow-lg hover:shadow-black/5"
+                className="themed flex h-[104px] flex-col justify-center rounded-xl border border-line bg-surface p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-ring/40 hover:shadow-lg hover:shadow-black/5"
               >
                 <h2 className="font-semibold text-fg">{p.name}</h2>
                 {p.description && (
@@ -44,9 +41,6 @@ export default async function ProjectsPage() {
                     {p.description}
                   </p>
                 )}
-                <p className="mt-3 text-xs text-subtle">
-                  {p._count.suites} suites · {p._count.runs} runs
-                </p>
               </Link>
             </li>
           ))}

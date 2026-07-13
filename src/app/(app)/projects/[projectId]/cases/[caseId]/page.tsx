@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth";
 import { buildSuiteTree, flattenForSelect } from "@/lib/suites";
 import type { Step } from "@/lib/validation";
-import { CaseDetail, type CaseData } from "./case-detail";
+import { CaseDetail, type CaseData, type CaseExecRow } from "./case-detail";
 
 export default async function CasePage({
   params,
@@ -14,7 +14,7 @@ export default async function CasePage({
   const user = await requireUser();
 
   // Route segment carries the case key (e.g. TS-T7060); fall back to id.
-  const [testCase, suites, members] = await Promise.all([
+  const [testCase, suites, members, executions] = await Promise.all([
     prisma.testCase.findFirst({
       where: {
         suite: { projectId, project: { members: { some: { userId: user.id } } } },
@@ -27,8 +27,46 @@ export default async function CasePage({
       where: { projectId },
       select: { user: { select: { id: true, name: true, email: true } } },
     }),
+    // Execution history across all cycles, newest result first.
+    prisma.testExecution.findMany({
+      where: {
+        run: { projectId },
+        case: { suite: { projectId }, OR: [{ key: caseId }, { id: caseId }] },
+      },
+      orderBy: [
+        { executedAt: { sort: "desc", nulls: "last" } },
+        { createdAt: "desc" },
+      ],
+      take: 100,
+      select: {
+        id: true,
+        status: true,
+        executedAt: true,
+        environment: true,
+        releaseVersion: true,
+        defectRef: true,
+        notes: true,
+        assignedToName: true,
+        executedBy: { select: { name: true, email: true } },
+        run: { select: { id: true, key: true, name: true } },
+      },
+    }),
   ]);
   if (!testCase) notFound();
+
+  const execRows: CaseExecRow[] = executions.map((e) => ({
+    id: e.id,
+    status: e.status,
+    executedAt: e.executedAt?.toISOString() ?? null,
+    environment: e.environment,
+    releaseVersion: e.releaseVersion,
+    defectRef: e.defectRef,
+    notes: e.notes,
+    testerName: e.executedBy?.name ?? e.executedBy?.email ?? e.assignedToName,
+    cycleId: e.run.id,
+    cycleKey: e.run.key,
+    cycleName: e.run.name,
+  }));
 
   const suiteOptions = flattenForSelect(buildSuiteTree(suites)).map((o) => ({
     value: o.id,
@@ -80,6 +118,7 @@ export default async function CasePage({
         suiteOptions={suiteOptions}
         folderPath={parts.join(" / ")}
         users={users}
+        executions={execRows}
       />
     </div>
   );

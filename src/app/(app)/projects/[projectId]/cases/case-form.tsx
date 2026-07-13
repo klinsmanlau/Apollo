@@ -25,7 +25,7 @@ type CaseFormValues = {
   externalRef: string;
 };
 
-const PRIORITIES = ["low", "medium", "high", "critical"];
+const PRIORITIES = ["low", "medium", "high"];
 const STATUSES = ["draft", "approved", "deprecated"];
 const SCRIPT_TYPES = ["steps", "plain", "bdd"];
 const TYPES = [

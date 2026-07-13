@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { PriorityBadge } from "@/components/ui";
+import { PriorityFlag } from "@/components/ui";
 import { SelectField, opts, type Opt } from "@/components/select-field";
 import { CUSTOM_FIELDS } from "@/lib/custom-fields";
 import {
@@ -12,7 +12,6 @@ import {
   autosaveCycle,
 } from "@/lib/actions/cycles";
 import { AddCasesModal } from "./add-cases-modal";
-import { EXEC_STATUS_META, execMeta } from "@/lib/exec-status";
 import type { Priority, ExecutionStatus, CycleStatus } from "@prisma/client";
 
 type CaseUser = { id: string; name: string | null; email: string };
@@ -27,6 +26,9 @@ export type ExecRow = {
   casePriority: Priority;
   executedByName: string | null;
   executedAt: string | null;
+  assignedToId: string | null;
+  assignedToName: string | null;
+  attachmentCount: number;
 };
 
 export type CycleData = {
@@ -91,44 +93,59 @@ function Section({
   );
 }
 
-function ExecStatusSelect({
+// Click the assignee name to open a dropdown of project users; picking one
+// (or "Unassigned") updates the execution's assignee.
+function AssigneeCell({
   value,
+  valueName,
+  users,
   onChange,
 }: {
-  value: ExecutionStatus;
-  onChange: (s: ExecutionStatus) => void;
+  value: string | null;
+  valueName: string | null;
+  users: CaseUser[];
+  onChange: (id: string | null, name: string | null) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const cur = execMeta(value);
   return (
     <div className="relative">
       <button
         onClick={() => setOpen((o) => !o)}
-        className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-semibold ${cur.pill}`}
+        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-fg transition-colors hover:bg-surface-muted"
       >
-        {cur.label} ▾
+        <span className={valueName ? "" : "text-subtle"}>{valueName ?? "Unassigned"}</span>
+        <span className="text-[9px] text-subtle">▾</span>
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 z-20 mt-1 w-52 overflow-hidden rounded-md border border-line bg-surface py-1 shadow-xl">
-            {EXEC_STATUS_META.map((s) => {
-              const selected = s.value === value;
+          <div className="absolute left-0 z-20 mt-1 max-h-64 w-52 overflow-y-auto rounded-md border border-line bg-surface py-1 shadow-xl">
+            <button
+              onClick={() => {
+                onChange(null, null);
+                setOpen(false);
+              }}
+              className={`flex w-full items-center px-3 py-1.5 text-left text-sm transition-colors hover:bg-surface-muted ${
+                value == null ? "font-medium text-ring" : "text-subtle"
+              }`}
+            >
+              Unassigned
+            </button>
+            {users.map((u) => {
+              const name = u.name ?? u.email;
+              const selected = u.id === value;
               return (
                 <button
-                  key={s.value}
+                  key={u.id}
                   onClick={() => {
-                    onChange(s.value);
+                    onChange(u.id, name);
                     setOpen(false);
                   }}
-                  className={`flex w-full items-center gap-3 border-l-2 px-3 py-2 text-left text-sm transition-colors ${
-                    selected
-                      ? "border-ring bg-ring/10 font-medium text-ring"
-                      : "border-transparent text-fg hover:bg-surface-muted"
+                  className={`flex w-full items-center px-3 py-1.5 text-left text-sm transition-colors hover:bg-surface-muted ${
+                    selected ? "bg-ring/10 font-medium text-ring" : "text-fg"
                   }`}
                 >
-                  <span className={`h-4 w-4 shrink-0 rounded-sm ${s.swatch}`} />
-                  {s.label}
+                  {name}
                 </button>
               );
             })}
@@ -151,6 +168,22 @@ export function CycleDetail({
   const [c, setC] = useState<CycleData>(initial);
   const [execs, setExecs] = useState<ExecRow[]>(initial.executions);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const [exportOpen, setExportOpen] = useState(false);
+
+  async function exportResults(format: "xlsx" | "csv") {
+    setExportOpen(false);
+    const res = await fetch(
+      `/api/projects/${projectId}/cycles/${c.id}/export?format=${format}`
+    );
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${(c.key ?? "cycle").toLowerCase()}-results.${format}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   // Re-sync executions when the server sends fresh data (e.g. after adding
   // cases). Only fires on refresh/navigation, so it won't clobber tab edits.
@@ -196,30 +229,16 @@ export function CycleDetail({
   }
 
   // ---- executions ----
-  const stats = useMemo(() => {
-    let executed = 0;
-    const by: Record<string, number> = {};
-    for (const e of execs) {
-      by[e.status] = (by[e.status] ?? 0) + 1;
-      if (e.status !== "not_executed") executed++;
-    }
-    return {
-      total: execs.length,
-      executed,
-      pass: by.pass ?? 0,
-      fail: by.fail ?? 0,
-      blocked: by.blocked ?? 0,
-    };
-  }, [execs]);
-  const progress = stats.total ? Math.round((stats.executed / stats.total) * 100) : 0;
-
-  function setStatus(id: string, status: ExecutionStatus) {
-    setExecs((prev) => prev.map((e) => (e.id === id ? { ...e, status } : e)));
-    recordExecution(id, { status });
-  }
   function remove(id: string) {
     setExecs((prev) => prev.filter((e) => e.id !== id));
     removeExecution(id);
+  }
+  // Change a case's assignee: update the row optimistically, then persist.
+  function setAssignee(id: string, assignedToId: string | null, assignedToName: string | null) {
+    setExecs((prev) =>
+      prev.map((e) => (e.id === id ? { ...e, assignedToId, assignedToName } : e))
+    );
+    recordExecution(id, { assignedToId, assignedToName });
   }
 
   const folderLabel =
@@ -249,6 +268,30 @@ export function CycleDetail({
             <span className="text-xs text-subtle">
               {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved ✓" : ""}
             </span>
+            <div className="relative">
+              <button
+                onClick={() => setExportOpen((o) => !o)}
+                className="rounded-md border border-line bg-surface px-3 py-1.5 text-sm font-medium text-fg transition-colors hover:bg-surface-muted"
+              >
+                Export results ▾
+              </button>
+              {exportOpen && (
+                <div className="absolute right-0 z-10 mt-1 w-36 overflow-hidden rounded-md border border-line bg-surface shadow-lg">
+                  <button
+                    onClick={() => exportResults("xlsx")}
+                    className="block w-full px-3 py-2 text-left text-xs text-fg hover:bg-surface-muted"
+                  >
+                    Excel (.xlsx)
+                  </button>
+                  <button
+                    onClick={() => exportResults("csv")}
+                    className="block w-full px-3 py-2 text-left text-xs text-fg hover:bg-surface-muted"
+                  >
+                    CSV (.csv)
+                  </button>
+                </div>
+              )}
+            </div>
             <Link
               href={`/projects/${projectId}/cycles/${c.key ?? c.id}/play`}
               className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90"
@@ -283,7 +326,7 @@ export function CycleDetail({
       {/* Content */}
       <div className="min-h-0 flex-1 overflow-y-auto py-5">
         {tab === "Details" && (
-          <div className="max-w-5xl space-y-8">
+          <div className="space-y-8">
             <Section title="Description">
               <div className="space-y-4">
                 <div>
@@ -409,24 +452,7 @@ export function CycleDetail({
 
         {tab === "Test cases" && (
           <div className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-4 rounded-lg border border-line bg-surface p-3">
-                <div className="flex items-center gap-2">
-                  <div className="h-2.5 w-40 overflow-hidden rounded-full bg-surface-muted">
-                    <div
-                      className={`h-full rounded-full ${stats.fail > 0 ? "bg-amber-500" : "bg-green-500"}`}
-                      style={{ width: `${progress}%` }}
-                    />
-                  </div>
-                  <span className="text-sm font-semibold text-fg">{progress}%</span>
-                </div>
-                <span className="text-xs text-muted">
-                  {stats.executed}/{stats.total} executed
-                </span>
-                <span className="text-xs text-green-600 dark:text-green-400">{stats.pass} pass</span>
-                <span className="text-xs text-red-600 dark:text-red-400">{stats.fail} fail</span>
-                <span className="text-xs text-amber-600 dark:text-amber-400">{stats.blocked} blocked</span>
-              </div>
+            <div className="flex flex-wrap items-center justify-end gap-3">
               <AddCasesModal
                 projectId={projectId}
                 cycleId={c.id}
@@ -444,19 +470,22 @@ export function CycleDetail({
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-surface-muted text-[11px] uppercase tracking-wide text-subtle">
                     <tr>
-                      <th className="px-3 py-2 text-left font-semibold">Key</th>
-                      <th className="px-2 py-2 text-left font-semibold">Test case</th>
-                      <th className="px-2 py-2 text-left font-semibold">Priority</th>
-                      <th className="px-2 py-2 text-left font-semibold">Status</th>
-                      <th className="px-2 py-2 text-left font-semibold">Notes</th>
-                      <th className="px-2 py-2 text-left font-semibold">Executed by</th>
+                      <th className="w-8 px-2 py-1.5 text-left font-semibold">P</th>
+                      <th className="px-3 py-1.5 text-left font-semibold">Key</th>
+                      <th className="px-2 py-1.5 text-left font-semibold">Test case</th>
+                      <th className="px-2 py-1.5 text-left font-semibold">Notes</th>
+                      <th className="px-2 py-1.5 text-left font-semibold">Assignee</th>
+                      <th className="px-2 py-1.5 text-left font-semibold">Executed by</th>
                       <th className="w-8" />
                     </tr>
                   </thead>
                   <tbody>
                     {execs.map((e) => (
-                      <tr key={e.id} className="border-t border-line align-top">
-                        <td className="whitespace-nowrap px-3 py-2">
+                      <tr key={e.id} className="border-t border-line align-middle">
+                        <td className="px-2 py-1.5">
+                          <PriorityFlag priority={e.casePriority} />
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-1.5">
                           <Link
                             href={`/projects/${projectId}/cases/${e.caseKey ?? e.caseId}`}
                             className="font-mono text-xs text-ring hover:underline"
@@ -464,7 +493,7 @@ export function CycleDetail({
                             {e.caseKey ?? "—"}
                           </Link>
                         </td>
-                        <td className="px-2 py-2">
+                        <td className="px-2 py-1.5">
                           <Link
                             href={`/projects/${projectId}/cases/${e.caseKey ?? e.caseId}`}
                             className="text-fg hover:text-ring hover:underline"
@@ -472,24 +501,34 @@ export function CycleDetail({
                             {e.caseTitle}
                           </Link>
                         </td>
-                        <td className="px-2 py-2">
-                          <PriorityBadge priority={e.casePriority} />
-                        </td>
-                        <td className="px-2 py-2">
-                          <ExecStatusSelect value={e.status} onChange={(s) => setStatus(e.id, s)} />
-                        </td>
-                        <td className="px-2 py-2">
+                        <td className="px-2 py-1.5">
                           <input
                             defaultValue={e.notes ?? ""}
                             onBlur={(ev) => recordExecution(e.id, { notes: ev.target.value })}
                             placeholder="Add note…"
-                            className="w-full rounded-md border border-transparent bg-transparent px-2 py-1 text-sm transition-colors hover:bg-surface-muted focus:border-line focus:bg-surface focus:outline-none placeholder:text-subtle"
+                            className="w-full rounded-md border border-transparent bg-transparent px-2 py-0.5 text-sm transition-colors hover:bg-surface-muted focus:border-line focus:bg-surface focus:outline-none placeholder:text-subtle"
                           />
                         </td>
-                        <td className="whitespace-nowrap px-2 py-2 text-xs text-subtle">
-                          {e.executedByName ?? "—"}
+                        <td className="px-2 py-1.5">
+                          <AssigneeCell
+                            value={e.assignedToId}
+                            valueName={e.assignedToName}
+                            users={c.users}
+                            onChange={(id, name) => setAssignee(e.id, id, name)}
+                          />
                         </td>
-                        <td className="px-2 py-2">
+                        <td className="whitespace-nowrap px-2 py-1 text-xs text-subtle">
+                          {e.executedByName ?? "—"}
+                          {e.attachmentCount > 0 && (
+                            <span
+                              className="ml-2 text-muted"
+                              title={`${e.attachmentCount} attachment${e.attachmentCount === 1 ? "" : "s"} — open in Test Player`}
+                            >
+                              📎{e.attachmentCount}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-2 py-1.5">
                           <button
                             onClick={() => remove(e.id)}
                             className="text-subtle transition-colors hover:text-red-500"

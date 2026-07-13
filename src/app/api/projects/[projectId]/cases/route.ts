@@ -4,6 +4,7 @@ import {
   type SortField,
   type SortDir,
 } from "@/lib/cases-query";
+import { normalizeFilters, type CaseFilter } from "@/lib/case-filters";
 
 const SORT_FIELDS = new Set(["key", "title", "priority", "status"]);
 
@@ -32,6 +33,17 @@ export async function GET(
     sortParam && SORT_FIELDS.has(sortParam) ? (sortParam as SortField) : undefined;
   const dir: SortDir = url.searchParams.get("dir") === "desc" ? "desc" : "asc";
 
+  // Filters arrive as a JSON array; normalize/validate against the schema.
+  let filters: CaseFilter[] = [];
+  const filtersParam = url.searchParams.get("filters");
+  if (filtersParam) {
+    try {
+      filters = normalizeFilters(JSON.parse(filtersParam));
+    } catch {
+      filters = [];
+    }
+  }
+
   const { cases, total } = await queryCasePage(
     projectId,
     { suiteIds, archived },
@@ -39,7 +51,8 @@ export async function GET(
     page,
     sort,
     dir,
-    { memberClerkId: userId }
+    { memberClerkId: userId },
+    filters
   );
   return Response.json({ cases, total });
 }

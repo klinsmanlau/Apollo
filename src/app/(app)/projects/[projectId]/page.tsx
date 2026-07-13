@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { requireUser } from "@/lib/auth";
+import { requireUser, getProjectRole, roleAtLeast } from "@/lib/auth";
 import { queryCasePage, suiteCaseCounts } from "@/lib/cases-query";
 import { ImportModal } from "./import-modal";
 import { ProjectWorkspace } from "./project-workspace";
@@ -17,18 +17,22 @@ export default async function ProjectPage({
   const { projectId } = await params;
   const { folder } = await searchParams;
   const user = await requireUser();
+  const myRole = await getProjectRole(projectId, user);
+  if (!myRole) notFound();
+  const canEdit = roleAtLeast(myRole, "lead");
+  const canDelete = roleAtLeast(myRole, "admin");
 
   // Everything the page needs runs in one parallel batch (each DB round-trip
   // to the pooler is the cost driver, so we avoid sequential awaits). Case
   // rows load on demand afterwards; here we only prefetch the first "all" page.
   const [project, suites, directCounts, archivedCount, initialAll] =
     await Promise.all([
-      prisma.project.findFirst({
-        where: { id: projectId, members: { some: { userId: user.id } } },
-      }),
+      // Access already checked via getProjectRole (covers global admins too).
+      prisma.project.findFirst({ where: { id: projectId } }),
       prisma.testSuite.findMany({
         where: { projectId },
-        select: { id: true, name: true, parentSuiteId: true },
+        select: { id: true, name: true, parentSuiteId: true, position: true },
+        orderBy: [{ position: "asc" }, { name: "asc" }],
       }),
       suiteCaseCounts(projectId),
       prisma.testCase.count({ where: { suite: { projectId }, archived: true } }),
@@ -58,7 +62,7 @@ export default async function ProjectPage({
             <p className="mt-1 text-sm text-muted">{project.description}</p>
           )}
         </div>
-        <ImportModal projectId={projectId} />
+        {canEdit && <ImportModal projectId={projectId} />}
       </div>
 
       <ProjectTabs projectId={projectId} />
@@ -71,6 +75,8 @@ export default async function ProjectPage({
         initialCases={initial.cases}
         initialTotal={initial.total}
         initialFolder={validFolder}
+        canEdit={canEdit}
+        canDelete={canDelete}
       />
     </div>
   );

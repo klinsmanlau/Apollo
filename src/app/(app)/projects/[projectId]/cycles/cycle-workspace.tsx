@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import type { CycleRow } from "@/lib/cycles-query";
 import { cloneCycles, deleteCycles, addCycleFolder, removeCycleFolder } from "@/lib/actions/cycles";
 import { NewCycleModal, type CycleUser } from "./new-cycle-modal";
+import { RefreshButton } from "@/components/refresh-button";
 
 export type WFolder = { id: string; name: string; parentFolderId: string | null };
 
@@ -25,14 +26,26 @@ const STATUS_LABEL: Record<CycleRow["status"], string> = {
 };
 
 function ProgressBar({ c }: { c: CycleRow }) {
-  const hasFail = c.total > 0 && c.passed < c.executed;
+  // Proportional bar: each status fills its share of the total, so e.g. a run
+  // with passes + in-progress shows green + amber side by side. Colors match
+  // the execution palette (pass=green, fail=red, blocked=blue, in progress=amber).
+  const pct = (n: number) => (c.total > 0 ? (n / c.total) * 100 : 0);
+  const segments = [
+    { key: "pass", w: pct(c.passed), cls: "bg-green-500" },
+    { key: "fail", w: pct(c.failed), cls: "bg-red-500" },
+    { key: "blocked", w: pct(c.blocked), cls: "bg-blue-500" },
+    { key: "in_progress", w: pct(c.inProgress), cls: "bg-amber-500" },
+  ].filter((s) => s.w > 0);
+  const title = `${c.passed} passed · ${c.failed} failed · ${c.blocked} blocked · ${c.inProgress} in progress · ${c.total} total`;
   return (
     <div className="flex items-center gap-2">
-      <div className="h-2 w-28 overflow-hidden rounded-full bg-surface-muted">
-        <div
-          className={`h-full rounded-full ${hasFail ? "bg-amber-500" : "bg-green-500"}`}
-          style={{ width: `${c.progress}%` }}
-        />
+      <div
+        className="flex h-2 w-28 overflow-hidden rounded-full bg-surface-muted"
+        title={title}
+      >
+        {segments.map((s) => (
+          <div key={s.key} className={`h-full ${s.cls}`} style={{ width: `${s.w}%` }} />
+        ))}
       </div>
       <span className="w-9 text-right text-xs text-muted">{c.progress}%</span>
     </div>
@@ -47,6 +60,8 @@ export function CycleWorkspace({
   initialTotal,
   initialFolder,
   users,
+  canEdit = true,
+  canDelete = true,
 }: {
   projectId: string;
   folders: WFolder[];
@@ -55,6 +70,10 @@ export function CycleWorkspace({
   initialTotal: number;
   initialFolder: string | null;
   users: CycleUser[];
+  /** lead+ — create/clone cycles and folders. */
+  canEdit?: boolean;
+  /** admin — destructive deletes. */
+  canDelete?: boolean;
 }) {
   const router = useRouter();
   const [rows, setRows] = useState<CycleRow[]>(initialCycles);
@@ -179,6 +198,11 @@ export function CycleWorkspace({
       router.refresh();
     })();
   }
+  // Re-pull the current view (latest cycle statuses/progress) + server tree.
+  async function refresh() {
+    await load(selectedFolder, cycleQuery, page);
+    router.refresh();
+  }
 
   const selectedIds = [...selected];
   const roots = childrenOf.get(null) ?? [];
@@ -226,17 +250,19 @@ export function CycleWorkspace({
           <span className="ml-auto shrink-0 text-xs text-subtle group-hover:hidden">
             {countFor(folder.id)}
           </span>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              if (confirm(`Delete folder "${folder.name}" and its subfolders?`))
-                run(() => removeCycleFolder(projectId, folder.id));
-            }}
-            className="ml-auto hidden text-xs text-subtle hover:text-red-500 group-hover:inline"
-            title="Delete folder"
-          >
-            ✕
-          </button>
+          {canDelete && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (confirm(`Delete folder "${folder.name}" and its subfolders?`))
+                  run(() => removeCycleFolder(projectId, folder.id));
+              }}
+              className="ml-auto hidden text-xs text-subtle hover:text-red-500 group-hover:inline"
+              title="Delete folder"
+            >
+              ✕
+            </button>
+          )}
         </div>
         {open && kids.length > 0 && (
           <ul>
@@ -254,12 +280,14 @@ export function CycleWorkspace({
       {/* Left panel */}
       <aside className="card flex min-h-0 max-h-[70dvh] flex-col p-3 lg:h-full lg:max-h-none">
         <div className="mb-2 flex items-center gap-2">
-          <button
-            onClick={() => setCreating(true)}
-            className="h-8 shrink-0 rounded-md bg-primary px-3 text-xs font-medium text-primary-fg hover:opacity-90"
-          >
-            + New Folder
-          </button>
+          {canEdit && (
+            <button
+              onClick={() => setCreating(true)}
+              className="h-8 shrink-0 rounded-md bg-primary px-3 text-xs font-medium text-primary-fg hover:opacity-90"
+            >
+              + New Folder
+            </button>
+          )}
           <input
             value={folderQuery}
             onChange={(e) => setFolderQuery(e.target.value)}
@@ -310,6 +338,8 @@ export function CycleWorkspace({
             placeholder="Search cycles…"
             className="field h-8 w-44 px-2 py-1 text-xs"
           />
+          <RefreshButton onRefresh={refresh} title="Refresh cycles" />
+          {canEdit && (
           <NewCycleModal
             projectId={projectId}
             folderOptions={folders
@@ -319,34 +349,39 @@ export function CycleWorkspace({
             defaultFolderId={selectedFolder ?? undefined}
             users={users}
           />
+          )}
         </div>
 
         {selected.size > 0 && (
           <div className="flex items-center gap-2 border-b border-line bg-surface-muted px-3 py-2 text-sm">
             <span className="font-medium text-fg">{selected.size} selected</span>
-            <button
-              onClick={() =>
-                run(async () => {
-                  await cloneCycles(projectId, selectedIds);
-                  setSelected(new Set());
-                })
-              }
-              className="rounded-md border border-line bg-surface px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface-muted"
-            >
-              Clone
-            </button>
-            <button
-              onClick={() => {
-                if (confirm(`Delete ${selected.size} test cycle(s)?`))
+            {canEdit && (
+              <button
+                onClick={() =>
                   run(async () => {
-                    await deleteCycles(projectId, selectedIds);
+                    await cloneCycles(projectId, selectedIds);
                     setSelected(new Set());
-                  });
-              }}
-              className="rounded-md border border-red-200 bg-surface px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-500/30 dark:text-red-400"
-            >
-              Delete
-            </button>
+                  })
+                }
+                className="rounded-md border border-line bg-surface px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface-muted"
+              >
+                Clone
+              </button>
+            )}
+            {canDelete && (
+              <button
+                onClick={() => {
+                  if (confirm(`Delete ${selected.size} test cycle(s)?`))
+                    run(async () => {
+                      await deleteCycles(projectId, selectedIds);
+                      setSelected(new Set());
+                    });
+                }}
+                className="rounded-md border border-red-200 bg-surface px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-500/30 dark:text-red-400"
+              >
+                Delete
+              </button>
+            )}
             <button onClick={() => setSelected(new Set())} className="ml-auto text-xs text-subtle hover:text-fg">
               Clear
             </button>

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { requireUser } from "@/lib/auth";
+import { requireUser, getProjectRole, roleAtLeast } from "@/lib/auth";
 import {
   queryCyclePage,
   cycleFolderCounts,
@@ -20,10 +20,12 @@ export default async function CyclesPage({
   const { projectId } = await params;
   const { folder } = await searchParams;
   const user = await requireUser();
+  const myRole = await getProjectRole(projectId, user);
+  if (!myRole) notFound();
 
   const [project, folders, members] = await Promise.all([
     prisma.project.findFirst({
-      where: { id: projectId, members: { some: { userId: user.id } } },
+      where: { id: projectId },
       select: { id: true, name: true },
     }),
     prisma.cycleFolder.findMany({
@@ -74,6 +76,8 @@ export default async function CyclesPage({
         initialTotal={initial.total}
         initialFolder={validFolder}
         users={users}
+        canEdit={roleAtLeast(myRole, "lead")}
+        canDelete={roleAtLeast(myRole, "admin")}
       />
     </div>
   );
