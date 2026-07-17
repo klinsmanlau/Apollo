@@ -253,6 +253,7 @@ enum ExecutionStatus {
   not_executed
   in_progress
   pass
+  pass_auto // "Passed [A]" — a pass recorded by automation (DeviceCloud webhook)
   fail
   blocked
 }

@@ -65,6 +65,7 @@ const STATUS_STYLES: Record<ExecutionStatus, string> = {
   not_executed: "bg-gray-100 text-gray-600 dark:bg-gray-500/15 dark:text-gray-300",
   in_progress: "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300",
   pass: "bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-300",
+  pass_auto: "bg-green-800 text-white dark:bg-green-700 dark:text-white",
   fail: "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300",
   blocked: "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300",
 };
@@ -73,6 +74,7 @@ const STATUS_LABELS: Record<ExecutionStatus, string> = {
   not_executed: "Not executed",
   in_progress: "In progress",
   pass: "Pass",
+  pass_auto: "Pass [A]",
   fail: "Fail",
   blocked: "Blocked",
 };

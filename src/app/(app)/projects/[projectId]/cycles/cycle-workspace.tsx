@@ -32,11 +32,12 @@ function ProgressBar({ c }: { c: CycleRow }) {
   const pct = (n: number) => (c.total > 0 ? (n / c.total) * 100 : 0);
   const segments = [
     { key: "pass", w: pct(c.passed), cls: "bg-green-500" },
+    { key: "pass_auto", w: pct(c.passedAuto), cls: "bg-green-800" },
     { key: "fail", w: pct(c.failed), cls: "bg-red-500" },
     { key: "blocked", w: pct(c.blocked), cls: "bg-blue-500" },
     { key: "in_progress", w: pct(c.inProgress), cls: "bg-amber-500" },
   ].filter((s) => s.w > 0);
-  const title = `${c.passed} passed · ${c.failed} failed · ${c.blocked} blocked · ${c.inProgress} in progress · ${c.total} total`;
+  const title = `${c.passed} passed · ${c.passedAuto} pass [A] · ${c.failed} failed · ${c.blocked} blocked · ${c.inProgress} in progress · ${c.total} total`;
   return (
     <div className="flex items-center gap-2">
       <div

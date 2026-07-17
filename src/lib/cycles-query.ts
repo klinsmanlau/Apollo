@@ -15,6 +15,7 @@ export type CycleRow = {
   total: number;
   executed: number;
   passed: number;
+  passedAuto: number;
   failed: number;
   blocked: number;
   inProgress: number;
@@ -136,8 +137,8 @@ export async function queryCyclePage(
       })
     : [];
 
-  type Stat = { total: number; executed: number; passed: number; failed: number; blocked: number; inProgress: number };
-  const zero = (): Stat => ({ total: 0, executed: 0, passed: 0, failed: 0, blocked: 0, inProgress: 0 });
+  type Stat = { total: number; executed: number; passed: number; passedAuto: number; failed: number; blocked: number; inProgress: number };
+  const zero = (): Stat => ({ total: 0, executed: 0, passed: 0, passedAuto: 0, failed: 0, blocked: 0, inProgress: 0 });
   const stats = new Map<string, Stat>();
   for (const g of grouped) {
     const s = stats.get(g.runId) ?? zero();
@@ -145,6 +146,7 @@ export async function queryCyclePage(
     s.total += n;
     if ((g.status as ExecutionStatus) !== "not_executed") s.executed += n;
     if (g.status === "pass") s.passed += n;
+    else if (g.status === "pass_auto") s.passedAuto += n;
     else if (g.status === "fail") s.failed += n;
     else if (g.status === "blocked") s.blocked += n;
     else if (g.status === "in_progress") s.inProgress += n;
@@ -154,6 +156,11 @@ export async function queryCyclePage(
   const cycles: CycleRow[] = runs.map((r) => {
     const s = stats.get(r.id) ?? zero();
     const progress = s.total ? Math.round((s.executed / s.total) * 100) : 0;
+    // Status derived from progress: every case executed → Done; any remaining
+    // (or nothing executed yet) → In Progress. An empty cycle (no cases) has
+    // nothing to run, so it stays Not executed.
+    const status: CycleRow["status"] =
+      s.total === 0 ? "not_executed" : progress >= 100 ? "done" : "in_progress";
     return {
       id: r.id,
       key: r.key,
@@ -162,12 +169,12 @@ export async function queryCyclePage(
       total: s.total,
       executed: s.executed,
       passed: s.passed,
+      passedAuto: s.passedAuto,
       failed: s.failed,
       blocked: s.blocked,
       inProgress: s.inProgress,
       progress,
-      // Manually-set cycle status (distinct from the progress bar).
-      status: r.status,
+      status,
     };
   });
 

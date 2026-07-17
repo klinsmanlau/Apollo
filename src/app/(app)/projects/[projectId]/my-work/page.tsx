@@ -12,10 +12,10 @@ export default async function MyWorkPage({
 }) {
   const { projectId } = await params;
   const user = await requireUser();
-  const myRole = await getProjectRole(projectId, user);
-  if (!myRole) notFound();
 
-  const [project, executions] = await Promise.all([
+  // Role check runs inside the parallel batch; its result gates rendering.
+  const [myRole, project, executions] = await Promise.all([
+    getProjectRole(projectId, user),
     prisma.project.findFirst({
       where: { id: projectId },
       select: { id: true, name: true },
@@ -43,7 +43,7 @@ export default async function MyWorkPage({
       },
     }),
   ]);
-  if (!project) notFound();
+  if (!myRole || !project) notFound();
 
   // Group by cycle, preserving the query's cycle order.
   const byCycle = new Map<string, { run: (typeof executions)[number]["run"]; items: typeof executions }>();

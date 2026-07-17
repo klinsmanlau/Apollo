@@ -2,7 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireProjectRole } from "@/lib/auth";
+import {
+  requireProjectRole,
+  requireUser,
+  effectiveRole,
+  roleAtLeast,
+} from "@/lib/auth";
 import { nextCycleKey, parseKey } from "@/lib/keys";
 import type { ExecutionStatus, CycleStatus, Prisma } from "@prisma/client";
 
@@ -54,14 +59,24 @@ export async function autosaveCycle(
   cycleId: string,
   patch: Record<string, unknown>
 ): Promise<{ ok: true } | { error: string }> {
+  // Hot path (autosave on blur): membership role rides along with the cycle
+  // fetch so authorization costs no extra round trip.
+  const user = await requireUser();
   const run = await prisma.testRun.findFirst({
     where: { id: cycleId },
-    select: { id: true, projectId: true },
+    select: {
+      id: true,
+      projectId: true,
+      project: {
+        select: {
+          members: { where: { userId: user.id }, select: { role: true } },
+        },
+      },
+    },
   });
   if (!run) return { error: "Not found" };
-  try {
-    await requireProjectRole(run.projectId, "lead");
-  } catch {
+  const role = effectiveRole(user, run.project.members[0]?.role);
+  if (!role || !roleAtLeast(role, "lead")) {
     return { error: "You need the lead role to edit cycles" };
   }
 
@@ -99,11 +114,14 @@ export async function autosaveCycle(
 
 export async function cloneCycles(projectId: string, cycleIds: string[]) {
   const { user } = await requireProjectRole(projectId, "lead");
+  // One query for all sources (ordered as selected) instead of one per cycle.
+  const found = await prisma.testRun.findMany({
+    where: { id: { in: cycleIds }, projectId },
+    include: { executions: { select: { caseId: true } } },
+  });
+  const byId = new Map(found.map((s) => [s.id, s]));
   for (const id of cycleIds) {
-    const src = await prisma.testRun.findFirst({
-      where: { id, projectId },
-      include: { executions: { select: { caseId: true } } },
-    });
+    const src = byId.get(id);
     if (!src) continue;
     const key = await nextCycleKey(projectId);
     await prisma.testRun.create({
@@ -295,16 +313,37 @@ export async function recordExecution(
     actualTime?: number | null;
   }
 ): Promise<{ ok: true } | { error: string }> {
+  // Hot path (fires per step click in the Test Player): membership role rides
+  // along with the execution fetch so authorization costs no extra round trip.
+  const user = await requireUser();
   const ex = await prisma.testExecution.findFirst({
     where: { id: executionId },
-    select: { id: true, run: { select: { projectId: true } } },
+    select: {
+      id: true,
+      run: {
+        select: {
+          projectId: true,
+          project: {
+            select: {
+              members: { where: { userId: user.id }, select: { role: true } },
+            },
+          },
+        },
+      },
+      _count: { select: { attachmentFiles: true } },
+    },
   });
   if (!ex) return { error: "Not found" };
-  let user;
-  try {
-    ({ user } = await requireProjectRole(ex.run.projectId, "tester"));
-  } catch {
+  const role = effectiveRole(user, ex.run.project.members[0]?.role);
+  if (!role || !roleAtLeast(role, "tester")) {
     return { error: "You need the tester role to record results" };
+  }
+
+  // Evidence gate: a manual "Pass" needs at least one attachment. Only applies
+  // here, so DeviceCloud automation (which writes executions directly, and has
+  // the console_url as its evidence) is unaffected.
+  if (patch.status === "pass" && ex._count.attachmentFiles === 0) {
+    return { error: "Attach evidence (a file) before marking this case as Passed" };
   }
 
   const data: Record<string, unknown> = {};

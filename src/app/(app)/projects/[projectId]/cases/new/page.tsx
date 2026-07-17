@@ -16,15 +16,15 @@ export default async function NewCasePage({
   const { projectId } = await params;
   const { suiteId } = await searchParams;
   const user = await requireUser();
-  const myRole = await getProjectRole(projectId, user);
-  if (!myRole || !roleAtLeast(myRole, "lead")) notFound();
 
-  const project = await prisma.project.findFirst({
-    where: { id: projectId },
-  });
-  if (!project) notFound();
+  // Role check + data in one parallel batch (round trips are the cost driver).
+  const [myRole, project, suites] = await Promise.all([
+    getProjectRole(projectId, user),
+    prisma.project.findFirst({ where: { id: projectId } }),
+    prisma.testSuite.findMany({ where: { projectId } }),
+  ]);
+  if (!myRole || !roleAtLeast(myRole, "lead") || !project) notFound();
 
-  const suites = await prisma.testSuite.findMany({ where: { projectId } });
   const suiteOptions = flattenForSelect(buildSuiteTree(suites));
 
   return (

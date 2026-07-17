@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireProjectRole } from "@/lib/auth";
 import type { Prisma } from "@prisma/client";
-import { nextCaseKey, parseKey } from "@/lib/keys";
+import { nextCaseKeys, parseKey } from "@/lib/keys";
 
 /** Move a single case into a different suite (drag-drop onto a folder). */
 export async function moveCase(
@@ -171,35 +171,35 @@ export async function cloneCases(projectId: string, caseIds: string[]) {
     where: { id: { in: caseIds }, suite: { projectId } },
   });
 
-  for (const c of cases) {
-    const key = await nextCaseKey(projectId);
-    await prisma.testCase.create({
-      data: {
-        key,
-        keyNum: parseKey(key)?.num ?? null,
-        suiteId: c.suiteId,
-        title: `${c.title} (Copy)`,
-        objective: c.objective,
-        preconditions: c.preconditions,
-        scriptType: c.scriptType,
-        steps: c.steps as Prisma.InputJsonValue,
-        scriptBody: c.scriptBody,
-        expectedResult: c.expectedResult,
-        priority: c.priority,
-        type: c.type,
-        status: c.status,
-        component: c.component,
-        ownerName: c.ownerName,
-        estimatedTime: c.estimatedTime,
-        tags: c.tags,
-        coverage: c.coverage,
-        customFields: c.customFields as Prisma.InputJsonValue,
-        // A clone is a fresh case: no source key, not archived.
-        sourceKey: null,
-        createdById: user.id,
-      },
-    });
-  }
+  // One round trip to reserve the key block, one createMany for the copies —
+  // instead of two sequential queries per cloned case.
+  const keys = await nextCaseKeys(projectId, cases.length);
+  await prisma.testCase.createMany({
+    data: cases.map((c, i) => ({
+      key: keys[i],
+      keyNum: parseKey(keys[i])?.num ?? null,
+      suiteId: c.suiteId,
+      title: `${c.title} (Copy)`,
+      objective: c.objective,
+      preconditions: c.preconditions,
+      scriptType: c.scriptType,
+      steps: c.steps as Prisma.InputJsonValue,
+      scriptBody: c.scriptBody,
+      expectedResult: c.expectedResult,
+      priority: c.priority,
+      type: c.type,
+      status: c.status,
+      component: c.component,
+      ownerName: c.ownerName,
+      estimatedTime: c.estimatedTime,
+      tags: c.tags,
+      coverage: c.coverage,
+      customFields: c.customFields as Prisma.InputJsonValue,
+      // A clone is a fresh case: no source key, not archived.
+      sourceKey: null,
+      createdById: user.id,
+    })),
+  });
   revalidatePath(`/projects/${projectId}`);
   return { cloned: cases.length };
 }

@@ -70,6 +70,18 @@ export function hasRole(user: User, min: Role): boolean {
 }
 
 /**
+ * Effective role from a membership row that was fetched alongside the entity
+ * (e.g. `project: { members: { where: { userId } } }`), saving hot server
+ * actions the extra role round trip. Global admins bypass membership.
+ */
+export function effectiveRole(
+  user: User,
+  memberRole: Role | null | undefined
+): Role | null {
+  return user.role === "admin" ? "admin" : memberRole ?? null;
+}
+
+/**
  * The user's effective role in a project, or null if not a member.
  * Global admins (`User.role == admin`) are treated as admin everywhere.
  */

@@ -14,10 +14,10 @@ export default async function EditCasePage({
 }) {
   const { projectId, caseId } = await params;
   const user = await requireUser();
-  const myRole = await getProjectRole(projectId, user);
-  if (!myRole || !roleAtLeast(myRole, "lead")) notFound();
 
-  const [testCase, suites] = await Promise.all([
+  // Role check + data in one parallel batch (round trips are the cost driver).
+  const [myRole, testCase, suites] = await Promise.all([
+    getProjectRole(projectId, user),
     prisma.testCase.findFirst({
       where: {
         suite: { projectId },
@@ -26,7 +26,7 @@ export default async function EditCasePage({
     }),
     prisma.testSuite.findMany({ where: { projectId } }),
   ]);
-  if (!testCase) notFound();
+  if (!myRole || !roleAtLeast(myRole, "lead") || !testCase) notFound();
 
   const suiteOptions = flattenForSelect(buildSuiteTree(suites));
 

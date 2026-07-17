@@ -7,10 +7,22 @@ export type DeviceCloudResult = {
   status: string;
   durationSeconds?: number;
   failReason?: string;
-  // Maps the flow to an existing Apollo case. Populated on the DeviceCloud side
-  // with the case's Zephyr/source key (matched against TestCase.sourceKey).
-  propertiesId?: string;
+  tags?: string[];
+  // Per-flow custom metadata from the Maestro YAML front matter. Values are
+  // always strings. We read `properties.testCaseId` to map to existing Apollo
+  // cases (against TestCase.key / sourceKey). One flow may reference several
+  // cases as a comma-separated list, e.g. "TS-T125, TS-T11418".
+  properties?: Record<string, string>;
 };
+
+// The `properties` key that carries the Apollo/Zephyr case key(s).
+const CASE_KEY_PROP = "testCaseId";
+
+/** Parse a case-key property value into individual keys (comma/space separated). */
+function parseCaseKeys(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return [...new Set(raw.split(/[,\s]+/).map((k) => k.trim()).filter(Boolean))];
+}
 
 export type DeviceCloudPayload = {
   event: string;
@@ -41,7 +53,8 @@ function mapStatus(s: string | undefined): ExecutionStatus {
   switch ((s ?? "").toUpperCase()) {
     case "PASSED":
     case "PASS":
-      return "pass";
+      // Automation passes get the distinct "Pass [A]" status.
+      return "pass_auto";
     case "FAILED":
     case "FAIL":
     case "ERROR":
@@ -131,19 +144,21 @@ export async function ingestDeviceCloudRun(
     select: { id: true, key: true },
   });
 
-  // 1) Determine each flow's reference token for matching an existing case:
-  //    prefer DeviceCloud's `propertiesId` (the Zephyr/source key), and fall
-  //    back to a key parsed out of the flow name (e.g. "TS-T7060 login").
+  // 1) Determine each flow's referenced case key(s): prefer DeviceCloud's
+  //    `properties.testCaseId` (may be a comma-separated list), falling back to
+  //    a single key parsed from the flow name (e.g. "TS-T7060 login").
   const flows = results.map((r) => {
-    const fromId = r.propertiesId?.trim() || null;
-    const m = KEY_RE.exec(r.name || "");
-    const fromName = m ? `${m[1].toUpperCase()}-T${m[2]}` : null;
-    return { r, key: fromId ?? fromName };
+    let keys = parseCaseKeys(r.properties?.[CASE_KEY_PROP]);
+    if (keys.length === 0) {
+      const m = KEY_RE.exec(r.name || "");
+      if (m) keys = [`${m[1].toUpperCase()}-T${m[2]}`];
+    }
+    return { r, keys };
   });
 
-  // 2) One query to match every referenced token to an existing case. We match
-  //    against sourceKey (where propertiesId points) and key (name fallback).
-  const referencedKeys = [...new Set(flows.map((f) => f.key).filter((k): k is string => !!k))];
+  // 2) One query to match every referenced key to an existing case, against
+  //    key or sourceKey.
+  const referencedKeys = [...new Set(flows.flatMap((f) => f.keys))];
   const matched = referencedKeys.length
     ? await prisma.testCase.findMany({
         where: {
@@ -159,28 +174,48 @@ export async function ingestDeviceCloudRun(
     if (c.sourceKey) caseIdByKey.set(c.sourceKey, c.id);
   }
 
-  // 3) Record one execution per flow that matched an existing case. Flows with
-  //    no matching case are SKIPPED (we never create cases) and reported back so
-  //    the missing mappings can be fixed on the DeviceCloud side.
-  const skippedFlows: string[] = [];
-  const executions = flows
-    .map((f) => {
-      const caseId = f.key ? caseIdByKey.get(f.key) : undefined;
+  // 3) Record one execution per (flow × matched case). A flow may map to several
+  //    cases; each shares the flow's status/notes. Keys with no matching case
+  //    are SKIPPED (we never create cases) and reported so the mapping can be
+  //    fixed on the DeviceCloud side. One execution row per case (dedup by
+  //    caseId — the DB is also unique on (run, case)).
+  const skipped: string[] = [];
+  const execByCase = new Map<string, {
+    runId: string;
+    caseId: string;
+    status: ExecutionStatus;
+    notes: string | null;
+    defectRef: string | null;
+    executedAt: Date;
+  }>();
+
+  for (const f of flows) {
+    if (f.keys.length === 0) {
+      skipped.push(f.r.name || "(unnamed flow)");
+      continue;
+    }
+    for (const k of f.keys) {
+      const caseId = caseIdByKey.get(k);
       if (!caseId) {
-        skippedFlows.push(f.r.name || "(unnamed flow)");
-        return null;
+        skipped.push(`${k} (${f.r.name || "unnamed flow"})`);
+        continue;
       }
-      return {
+      // If two flows target the same case, a FAIL wins over a PASS.
+      const status = mapStatus(f.r.status);
+      const prior = execByCase.get(caseId);
+      if (prior && prior.status === "fail") continue;
+      execByCase.set(caseId, {
         runId: cycle.id,
         caseId,
-        status: mapStatus(f.r.status),
+        status,
         notes: f.r.failReason || null,
         defectRef: payload.console_url || null,
         executedAt: new Date(),
-      };
-    })
-    .filter((e): e is NonNullable<typeof e> => e !== null);
+      });
+    }
+  }
 
+  const executions = [...execByCase.values()];
   if (executions.length) {
     await prisma.testExecution.createMany({ data: executions, skipDuplicates: true });
   }
@@ -189,7 +224,7 @@ export async function ingestDeviceCloudRun(
     created: true,
     cycleKey: cycle.key,
     executions: executions.length,
-    skipped: skippedFlows.length,
-    skippedFlows,
+    skipped: skipped.length,
+    skippedFlows: skipped,
   };
 }

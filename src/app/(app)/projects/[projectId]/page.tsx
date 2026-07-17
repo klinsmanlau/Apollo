@@ -17,17 +17,14 @@ export default async function ProjectPage({
   const { projectId } = await params;
   const { folder } = await searchParams;
   const user = await requireUser();
-  const myRole = await getProjectRole(projectId, user);
-  if (!myRole) notFound();
-  const canEdit = roleAtLeast(myRole, "lead");
-  const canDelete = roleAtLeast(myRole, "admin");
 
   // Everything the page needs runs in one parallel batch (each DB round-trip
-  // to the pooler is the cost driver, so we avoid sequential awaits). Case
-  // rows load on demand afterwards; here we only prefetch the first "all" page.
-  const [project, suites, directCounts, archivedCount, initialAll] =
+  // to the pooler is the cost driver, so we avoid sequential awaits) — the
+  // role check included; its result gates rendering below. Case rows load on
+  // demand afterwards; here we only prefetch the first "all" page.
+  const [myRole, project, suites, directCounts, archivedCount, initialAll] =
     await Promise.all([
-      // Access already checked via getProjectRole (covers global admins too).
+      getProjectRole(projectId, user),
       prisma.project.findFirst({ where: { id: projectId } }),
       prisma.testSuite.findMany({
         where: { projectId },
@@ -38,7 +35,9 @@ export default async function ProjectPage({
       prisma.testCase.count({ where: { suite: { projectId }, archived: true } }),
       folder ? null : queryCasePage(projectId, {}, "", 0),
     ]);
-  if (!project) notFound();
+  if (!myRole || !project) notFound();
+  const canEdit = roleAtLeast(myRole, "lead");
+  const canDelete = roleAtLeast(myRole, "admin");
 
   // Deep-linked to a folder → fetch that folder's first page (rare path).
   const validFolder =

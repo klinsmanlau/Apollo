@@ -266,9 +266,12 @@ function Section({
 function StatusDropdown({
   value,
   onChange,
+  passLocked = false,
 }: {
   value: ExecutionStatus;
   onChange: (s: ExecutionStatus) => void;
+  /** True when this case has no attachment — manual "Pass" needs evidence. */
+  passLocked?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const cur = execMeta(value);
@@ -286,21 +289,28 @@ function StatusDropdown({
           <div className="absolute right-0 z-20 mt-1 w-56 overflow-hidden rounded-md border border-line bg-surface py-1 shadow-xl">
             {EXEC_STATUS_META.map((s) => {
               const selected = s.value === value;
+              const locked = passLocked && s.value === "pass";
               return (
                 <button
                   key={s.value}
+                  disabled={locked}
+                  title={locked ? "Attach evidence before marking as Passed" : undefined}
                   onClick={() => {
+                    if (locked) return;
                     onChange(s.value);
                     setOpen(false);
                   }}
                   className={`flex w-full items-center gap-3 border-l-2 px-3 py-2 text-left text-sm transition-colors ${
-                    selected
-                      ? "border-ring bg-ring/10 font-medium text-ring"
-                      : "border-transparent text-fg hover:bg-surface-muted"
+                    locked
+                      ? "cursor-not-allowed border-transparent text-subtle opacity-50"
+                      : selected
+                        ? "border-ring bg-ring/10 font-medium text-ring"
+                        : "border-transparent text-fg hover:bg-surface-muted"
                   }`}
                 >
                   <span className={`h-4 w-4 shrink-0 rounded-sm ${s.swatch}`} />
                   {s.label}
+                  {locked && <span className="ml-auto text-[10px]">needs file</span>}
                 </button>
               );
             })}
@@ -337,6 +347,8 @@ export function TestPlayer({
   const [setBelowFor, setSetBelowFor] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [elapsed, setElapsed] = useState(data.executions[0]?.actualTime ?? 0);
+  // Server-rejected action (e.g. Passing without an attachment).
+  const [actionError, setActionError] = useState<string | null>(null);
   const cur = execs[idx];
 
   // Assignee select is keyed by user id (the FK); label is the display name.
@@ -358,8 +370,21 @@ export function TestPlayer({
   }, [running]);
 
   function patchExec(id: string, patch: Partial<PlayerExec>) {
+    // Snapshot the fields being changed so we can roll back if the server
+    // rejects the patch (e.g. marking Passed without an attachment).
+    const before = execs.find((e) => e.id === id);
     setExecs((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
-    recordExecution(id, patch as Parameters<typeof recordExecution>[1]);
+    recordExecution(id, patch as Parameters<typeof recordExecution>[1]).then((res) => {
+      if (res && "error" in res) {
+        if (before) {
+          const revert = Object.fromEntries(
+            Object.keys(patch).map((k) => [k, before[k as keyof PlayerExec]])
+          ) as Partial<PlayerExec>;
+          setExecs((prev) => prev.map((e) => (e.id === id ? { ...e, ...revert } : e)));
+        }
+        setActionError(res.error);
+      }
+    });
   }
 
   function goTo(newIdx: number) {
@@ -446,10 +471,22 @@ export function TestPlayer({
   function setAllBelow(execId: string, status: ExecutionStatus) {
     const pos = flat.findIndex((e) => e.id === execId);
     if (pos < 0) return;
-    const ids = flat.slice(pos).map((e) => e.id);
-    setExecs((prev) => prev.map((e) => (ids.includes(e.id) ? { ...e, status } : e)));
-    ids.forEach((id) => recordExecution(id, { status }));
+    const targets = flat.slice(pos);
+
+    // Passing requires evidence: skip cases with no attachment and say which.
+    const allowed =
+      status === "pass" ? targets.filter((e) => e.attachments.length > 0) : targets;
+    const blocked = targets.length - allowed.length;
+
+    const ids = new Set(allowed.map((e) => e.id));
+    setExecs((prev) => prev.map((e) => (ids.has(e.id) ? { ...e, status } : e)));
+    allowed.forEach((e) => recordExecution(e.id, { status }));
     setSetBelowFor(null);
+    setActionError(
+      blocked > 0
+        ? `${blocked} case${blocked === 1 ? "" : "s"} skipped — attach evidence before marking Passed.`
+        : null
+    );
   }
 
   const flagColor: Record<Priority, string> = {
@@ -627,6 +664,18 @@ export function TestPlayer({
             </div>
           ) : (
             <div className="space-y-6">
+              {actionError && (
+                <div className="flex items-start justify-between gap-2 rounded-md border border-amber-500/40 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+                  <span>{actionError}</span>
+                  <button
+                    onClick={() => setActionError(null)}
+                    className="shrink-0 opacity-70 hover:opacity-100"
+                    aria-label="Dismiss"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
               {/* Case header */}
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -642,6 +691,7 @@ export function TestPlayer({
                 <div className="flex items-center gap-2">
                   <StatusDropdown
                     value={cur.status}
+                    passLocked={cur.attachments.length === 0}
                     onChange={(s) => patchExec(cur.id, { status: s })}
                   />
                   <button

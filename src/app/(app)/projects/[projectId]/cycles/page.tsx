@@ -20,10 +20,10 @@ export default async function CyclesPage({
   const { projectId } = await params;
   const { folder } = await searchParams;
   const user = await requireUser();
-  const myRole = await getProjectRole(projectId, user);
-  if (!myRole) notFound();
 
-  const [project, folders, members] = await Promise.all([
+  // Role check runs inside the parallel batch; its result gates rendering.
+  const [myRole, project, folders, members] = await Promise.all([
+    getProjectRole(projectId, user),
     prisma.project.findFirst({
       where: { id: projectId },
       select: { id: true, name: true },
@@ -37,7 +37,7 @@ export default async function CyclesPage({
       select: { user: { select: { id: true, name: true, email: true } } },
     }),
   ]);
-  if (!project) notFound();
+  if (!myRole || !project) notFound();
   const users = members.map((m) => m.user);
 
   const validFolder =

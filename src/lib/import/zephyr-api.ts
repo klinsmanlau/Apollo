@@ -40,16 +40,30 @@ type ZephyrTestStep =
   | { inline?: { description?: string; testData?: string; expectedResult?: string } }
   | { testCase?: { self?: string } };
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 async function zGet<T>(path: string, token: string): Promise<T> {
   const url = path.startsWith("http") ? path : `${BASE}${path}`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-  });
-  if (!res.ok) {
+  // Retry rate-limit (and transient 5xx) responses a few times with backoff —
+  // required for the concurrent steps fetch below so a 429 doesn't silently
+  // drop a case's steps.
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    });
+    if (res.ok) return (await res.json()) as T;
+    if ((res.status === 429 || res.status >= 500) && attempt < 3) {
+      const retryAfter = Number(res.headers.get("retry-after"));
+      await sleep(
+        Number.isFinite(retryAfter) && retryAfter > 0
+          ? retryAfter * 1000
+          : 1000 * (attempt + 1)
+      );
+      continue;
+    }
     const body = await res.text().catch(() => "");
     throw new Error(`Zephyr API ${res.status} ${res.statusText} for ${url}\n${body.slice(0, 500)}`);
   }
-  return (await res.json()) as T;
 }
 
 /** Page through a Zephyr collection endpoint until isLast. */
@@ -163,18 +177,40 @@ export async function fetchZephyrCases(opts: ZephyrFetchOptions): Promise<Parsed
 
   const total = cases.length;
   let done = 0;
-  const parsed: ParsedCase[] = [];
 
-  for (const tc of cases) {
-    // 3) Per-case steps (only for step-scripted cases; errors are non-fatal).
-    let steps: Step[] = [];
-    try {
-      const stepList = await zList<ZephyrTestStep>(`/testcases/${tc.key}/teststeps`, token);
-      steps = mapSteps(stepList);
-    } catch {
-      steps = [];
+  // 3) Per-case steps — the API only exposes steps one test case at a time,
+  // so this is inherently a request per case. A small worker pool keeps a few
+  // requests in flight (cutting the fetch phase by ~that factor) while staying
+  // polite to Zephyr's rate limits; zGet retries 429s so nothing is dropped.
+  // Results land by index so output order matches the case list exactly.
+  const STEP_CONCURRENCY = 5;
+  const stepsByIndex: Step[][] = new Array(cases.length);
+  let nextIdx = 0;
+  async function stepsWorker() {
+    for (;;) {
+      const i = nextIdx++;
+      if (i >= cases.length) return;
+      try {
+        const stepList = await zList<ZephyrTestStep>(
+          `/testcases/${cases[i].key}/teststeps`,
+          token
+        );
+        stepsByIndex[i] = mapSteps(stepList);
+      } catch {
+        // Errors stay non-fatal per case, as before.
+        stepsByIndex[i] = [];
+      }
+      done++;
+      opts.onProgress?.(done, total);
     }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(STEP_CONCURRENCY, cases.length) }, stepsWorker)
+  );
 
+  const parsed: ParsedCase[] = [];
+  for (const [i, tc] of cases.entries()) {
+    const steps = stepsByIndex[i] ?? [];
     const folderPath = tc.folder?.id != null ? folderPaths.get(tc.folder.id) ?? [] : [];
 
     parsed.push({
@@ -195,9 +231,6 @@ export async function fetchZephyrCases(opts: ZephyrFetchOptions): Promise<Parsed
       scriptBody: null,
       customFields: {},
     });
-
-    done++;
-    opts.onProgress?.(done, total);
   }
 
   return parsed;

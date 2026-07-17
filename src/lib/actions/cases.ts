@@ -3,7 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { requireProjectRole } from "@/lib/auth";
+import {
+  requireProjectRole,
+  requireUser,
+  effectiveRole,
+  roleAtLeast,
+} from "@/lib/auth";
 import { caseSchema, type Step } from "@/lib/validation";
 import { nextCaseKey, parseKey } from "@/lib/keys";
 import type { Prisma } from "@prisma/client";
@@ -159,14 +164,28 @@ export async function autosaveCase(
   caseId: string,
   patch: Record<string, unknown>
 ): Promise<{ ok: true } | { error: string }> {
+  // Hot path (autosave on blur): membership role rides along with the case
+  // fetch so authorization costs no extra round trip.
+  const user = await requireUser();
   const existing = await prisma.testCase.findFirst({
     where: { id: caseId },
-    select: { id: true, suite: { select: { projectId: true } } },
+    select: {
+      id: true,
+      suite: {
+        select: {
+          projectId: true,
+          project: {
+            select: {
+              members: { where: { userId: user.id }, select: { role: true } },
+            },
+          },
+        },
+      },
+    },
   });
   if (!existing) return { error: "Not found" };
-  try {
-    await requireProjectRole(existing.suite.projectId, "lead");
-  } catch {
+  const role = effectiveRole(user, existing.suite.project.members[0]?.role);
+  if (!role || !roleAtLeast(role, "lead")) {
     return { error: "You need the lead role to edit test cases" };
   }
 

@@ -13,10 +13,9 @@ export default async function MembersPage({
   const { projectId } = await params;
   const user = await requireUser();
 
-  const myRole = await getProjectRole(projectId, user);
-  if (!myRole) notFound();
-
-  const [project, members] = await Promise.all([
+  // Role check runs inside the parallel batch; its result gates rendering.
+  const [myRole, project, members] = await Promise.all([
+    getProjectRole(projectId, user),
     prisma.project.findFirst({
       where: { id: projectId },
       select: { id: true, name: true },
@@ -32,7 +31,7 @@ export default async function MembersPage({
       },
     }),
   ]);
-  if (!project) notFound();
+  if (!myRole || !project) notFound();
 
   return (
     <div className="animate-fade flex h-full flex-col gap-4">

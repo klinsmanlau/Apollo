@@ -32,6 +32,13 @@ export const EXEC_STATUS_META: {
     border: "border-l-green-500",
   },
   {
+    value: "pass_auto",
+    label: "Pass [A]",
+    pill: "bg-green-800 text-white",
+    swatch: "bg-green-700",
+    border: "border-l-green-700",
+  },
+  {
     value: "fail",
     label: "Fail",
     pill: "bg-red-600 text-white",
