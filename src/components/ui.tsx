@@ -4,6 +4,7 @@ import type {
   CaseStatus,
   ExecutionStatus,
 } from "@prisma/client";
+import { Flag } from "@/components/icons";
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -32,11 +33,11 @@ const PRIORITY_FLAG_COLOR: Record<Priority, string> = {
 export function PriorityFlag({ priority }: { priority: Priority }) {
   return (
     <span
-      className={`text-base leading-none ${PRIORITY_FLAG_COLOR[priority]}`}
-      title={cap(priority)}
+      className={`inline-flex leading-none ${PRIORITY_FLAG_COLOR[priority]}`}
+      title={`${cap(priority)} priority`}
       aria-label={`${cap(priority)} priority`}
     >
-      ⚑
+      <Flag size={14} />
     </span>
   );
 }

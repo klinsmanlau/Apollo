@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { SelectField, type Opt } from "@/components/select-field";
+import { useConfirm } from "@/components/confirm-dialog";
 import { addMember, updateMemberRole, removeMember } from "@/lib/actions/members";
 
 export type MemberRow = {
@@ -44,6 +45,7 @@ export function MembersPanel({
   const [error, setError] = useState<string | null>(null);
   const [email, setEmail] = useState("");
   const [newRole, setNewRole] = useState("tester");
+  const { confirm, dialog } = useConfirm();
 
   function run(action: () => Promise<{ ok?: true; error?: string }>) {
     setError(null);
@@ -88,7 +90,7 @@ export function MembersPanel({
             <button
               type="submit"
               disabled={pending}
-              className="rounded-md bg-fg px-4 py-2 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="btn btn-primary"
             >
               {pending ? "Adding…" : "Add"}
             </button>
@@ -152,10 +154,20 @@ export function MembersPanel({
                 {canManage && (
                   <td className="px-4 py-2.5 text-right">
                     <button
-                      onClick={() => {
-                        if (confirm(`Remove ${m.name || m.email} from this project?`))
-                          run(() => removeMember(projectId, m.id));
-                      }}
+                      onClick={() =>
+                        confirm({
+                          title: "Remove member",
+                          body: (
+                            <>
+                              Remove <strong className="text-fg">{m.name || m.email}</strong>{" "}
+                              from this project? They'll lose access immediately.
+                            </>
+                          ),
+                          confirmLabel: "Remove",
+                          destructive: true,
+                          onConfirm: () => run(() => removeMember(projectId, m.id)),
+                        })
+                      }
                       disabled={pending}
                       className="text-xs text-subtle transition-colors hover:text-red-500 disabled:opacity-50"
                     >
@@ -168,6 +180,7 @@ export function MembersPanel({
           </tbody>
         </table>
       </div>
+      {dialog}
     </div>
   );
 }

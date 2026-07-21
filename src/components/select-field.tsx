@@ -2,11 +2,12 @@
 
 import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Check, ChevronDown, X } from "@/components/icons";
 
 export type Opt = { value: string; label: string };
 export const opts = (arr: string[]): Opt[] => arr.map((v) => ({ value: v, label: v }));
 
-/** Custom dropdown: invisible until hovered, with a hover ✕ to clear. */
+/** Custom dropdown: invisible until hovered, with a hover clear button. */
 export function SelectField({
   value,
   options,
@@ -82,10 +83,13 @@ export function SelectField({
               className="hidden rounded text-subtle hover:text-fg group-hover:inline"
               title="Clear"
             >
-              ✕
+              <X size={13} />
             </span>
           )}
-          <span className="text-xl leading-none text-subtle">▾</span>
+          <ChevronDown
+            size={14}
+            className={`text-subtle transition-transform duration-150 ${open ? "rotate-180" : ""}`}
+          />
         </span>
       </button>
 
@@ -104,7 +108,7 @@ export function SelectField({
                 ...(rect.top != null ? { top: rect.top } : {}),
                 ...(rect.bottom != null ? { bottom: rect.bottom } : {}),
               }}
-              className="z-50 min-w-[10rem] overflow-y-auto rounded-md border border-line bg-surface py-1 shadow-xl"
+              className="panel z-50 min-w-[10rem] overflow-y-auto"
             >
               {searchable && (
                 <input
@@ -126,11 +130,14 @@ export function SelectField({
                     onChange(o.value);
                     setOpen(false);
                   }}
-                  className={`block w-full px-3 py-1.5 text-left text-sm hover:bg-surface-muted ${
-                    o.value === value ? "text-fg" : "text-muted"
+                  className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-surface-muted ${
+                    o.value === value ? "font-medium text-fg" : "text-muted"
                   }`}
                 >
-                  {o.label}
+                  <span className="truncate">{o.label}</span>
+                  {o.value === value && (
+                    <Check size={13} className="shrink-0 text-ring" />
+                  )}
                 </button>
               ))}
             </div>

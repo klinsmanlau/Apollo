@@ -9,6 +9,7 @@ import { StatusBadge } from "@/components/ui";
 import { CUSTOM_FIELDS } from "@/lib/custom-fields";
 import type { Step } from "@/lib/validation";
 import type { ExecutionStatus } from "@prisma/client";
+import { ArrowLeft, ChevronDown, ChevronRight, X } from "@/components/icons";
 
 export type CaseUser = { id: string; name: string | null; email: string };
 
@@ -112,7 +113,7 @@ function ChipInput({
             onClick={() => onChange(values.filter((x) => x !== t))}
             className="text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-200"
           >
-            ✕
+            <X size={13} />
           </button>
         </span>
       ))}
@@ -150,7 +151,7 @@ function Section({
           onClick={() => setOpen((o) => !o)}
           className="flex items-center gap-1.5 text-sm font-semibold text-fg"
         >
-          <span className="text-xs text-subtle">{open ? "▾" : "▸"}</span>
+          <span className="text-xs text-subtle">{open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</span>
           {title}
         </button>
         {right && <div className="ml-auto">{right}</div>}
@@ -271,9 +272,9 @@ export function CaseDetail({
           <div className="min-w-0">
             <Link
               href={`/projects/${projectId}`}
-              className="text-sm text-subtle transition-colors hover:text-fg"
+              className="inline-flex items-center gap-1.5 text-sm text-subtle transition-colors hover:text-fg"
             >
-              ← {folderPath || "Back"}
+              <ArrowLeft size={14} /> {folderPath || "Back"}
             </Link>
             {c.key && (
               <p className="mt-1 font-mono text-xs text-subtle">{c.key}</p>
@@ -516,14 +517,14 @@ export function CaseDetail({
               <button
                 type="button"
                 title="Coming soon"
-                className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90"
+                className="btn btn-accent"
               >
                 ✨ Automate Test
               </button>
               <div className="ml-auto flex items-center gap-1.5">
                 <span className="text-xs font-medium text-muted">Data type:</span>
                 <span className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-subtle">
-                  None ▾
+                  None <ChevronDown size={12} />
                 </span>
               </div>
             </div>
@@ -625,7 +626,7 @@ export function CaseDetail({
                           title="Delete step"
                           className="hover:text-red-500"
                         >
-                          ✕
+                          <X size={13} />
                         </button>
                       </div>
                     </div>
@@ -636,14 +637,14 @@ export function CaseDetail({
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={() => addStep()}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface px-3 py-1.5 text-sm font-medium text-fg transition-colors hover:bg-surface-muted"
+                    className="btn btn-secondary"
                   >
                     ＋ Add step
                   </button>
                   <button
                     type="button"
                     title="Coming soon"
-                    className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface px-3 py-1.5 text-sm font-medium text-fg transition-colors hover:bg-surface-muted"
+                    className="btn btn-secondary"
                   >
                     ⦿ Record Steps
                   </button>
@@ -770,7 +771,7 @@ export function CaseDetail({
           <div className="flex justify-end gap-2">
             <button
               onClick={() => setConfirmDelete(false)}
-              className="rounded-md border border-line bg-surface px-4 py-2 text-sm font-medium text-fg transition-colors hover:bg-surface-muted"
+              className="btn btn-secondary"
             >
               Cancel
             </button>

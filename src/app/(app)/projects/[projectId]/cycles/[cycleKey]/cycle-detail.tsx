@@ -13,6 +13,7 @@ import {
 } from "@/lib/actions/cycles";
 import { AddCasesModal } from "./add-cases-modal";
 import type { Priority, ExecutionStatus, CycleStatus } from "@prisma/client";
+import { ArrowLeft, ChevronDown, ChevronRight, Paperclip, Play, X } from "@/components/icons";
 
 type CaseUser = { id: string; name: string | null; email: string };
 
@@ -83,7 +84,7 @@ function Section({
           onClick={() => setOpen((o) => !o)}
           className="flex items-center gap-1.5 text-sm font-semibold text-fg"
         >
-          <span className="text-xs text-subtle">{open ? "▾" : "▸"}</span>
+          <span className="text-xs text-subtle">{open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</span>
           {title}
         </button>
         {right && <div className="ml-auto">{right}</div>}
@@ -114,7 +115,7 @@ function AssigneeCell({
         className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-fg transition-colors hover:bg-surface-muted"
       >
         <span className={valueName ? "" : "text-subtle"}>{valueName ?? "Unassigned"}</span>
-        <span className="text-[9px] text-subtle">▾</span>
+        <span className="text-[9px] text-subtle"><ChevronDown size={13} /></span>
       </button>
       {open && (
         <>
@@ -253,9 +254,9 @@ export function CycleDetail({
           <div className="min-w-0">
             <Link
               href={`/projects/${projectId}/cycles`}
-              className="text-sm text-subtle transition-colors hover:text-fg"
+              className="inline-flex items-center gap-1.5 text-sm text-subtle transition-colors hover:text-fg"
             >
-              ← Test Cycles{c.folderPath ? ` · ${c.folderPath}` : ""}
+              <ArrowLeft size={14} /> Test Cycles{c.folderPath ? ` · ${c.folderPath}` : ""}
             </Link>
             {c.key && (
               <p className="mt-1 font-mono text-xs text-subtle">{c.key}</p>
@@ -271,9 +272,9 @@ export function CycleDetail({
             <div className="relative">
               <button
                 onClick={() => setExportOpen((o) => !o)}
-                className="rounded-md border border-line bg-surface px-3 py-1.5 text-sm font-medium text-fg transition-colors hover:bg-surface-muted"
+                className="btn btn-secondary"
               >
-                Export results ▾
+                Export results <ChevronDown size={12} />
               </button>
               {exportOpen && (
                 <div className="absolute right-0 z-10 mt-1 w-36 overflow-hidden rounded-md border border-line bg-surface shadow-lg">
@@ -294,9 +295,9 @@ export function CycleDetail({
             </div>
             <Link
               href={`/projects/${projectId}/cycles/${c.key ?? c.id}/play`}
-              className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90"
+              className="btn btn-accent"
             >
-              ▶ Test Player
+              <Play size={13} /> Test Player
             </Link>
           </div>
         </div>
@@ -524,7 +525,7 @@ export function CycleDetail({
                               className="ml-2 text-muted"
                               title={`${e.attachmentCount} attachment${e.attachmentCount === 1 ? "" : "s"} — open in Test Player`}
                             >
-                              📎{e.attachmentCount}
+                              <Paperclip size={12} />{e.attachmentCount}
                             </span>
                           )}
                         </td>
@@ -534,7 +535,7 @@ export function CycleDetail({
                             className="text-subtle transition-colors hover:text-red-500"
                             title="Remove from cycle"
                           >
-                            ✕
+                            <X size={13} />
                           </button>
                         </td>
                       </tr>

@@ -6,6 +6,7 @@ import { queryCasePage, suiteCaseCounts } from "@/lib/cases-query";
 import { ImportModal } from "./import-modal";
 import { ProjectWorkspace } from "./project-workspace";
 import { ProjectTabs } from "./project-tabs";
+import { ArrowLeft } from "@/components/icons";
 
 export default async function ProjectPage({
   params,
@@ -52,9 +53,9 @@ export default async function ProjectPage({
         <div>
           <Link
             href="/projects"
-            className="text-sm text-subtle transition-colors hover:text-fg"
+            className="inline-flex items-center gap-1.5 text-sm text-subtle transition-colors hover:text-fg"
           >
-            ← Projects
+            <ArrowLeft size={14} /> Projects
           </Link>
           <h1 className="mt-1 text-2xl font-bold text-fg">{project.name}</h1>
           {project.description && (

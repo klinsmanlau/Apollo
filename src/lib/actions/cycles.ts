@@ -298,6 +298,18 @@ export async function removeExecution(executionId: string) {
   await prisma.testExecution.delete({ where: { id: executionId } });
 }
 
+/** True if any step's Actual Result HTML embeds an image (counts as evidence). */
+function stepResultsHaveImage(results: unknown): boolean {
+  if (!Array.isArray(results)) return false;
+  return results.some(
+    (r) =>
+      r &&
+      typeof r === "object" &&
+      typeof (r as { actual?: unknown }).actual === "string" &&
+      /<img\b/i.test((r as { actual: string }).actual)
+  );
+}
+
 export async function recordExecution(
   executionId: string,
   patch: {
@@ -330,6 +342,7 @@ export async function recordExecution(
           },
         },
       },
+      stepResults: true,
       _count: { select: { attachmentFiles: true } },
     },
   });
@@ -339,11 +352,20 @@ export async function recordExecution(
     return { error: "You need the tester role to record results" };
   }
 
-  // Evidence gate: a manual "Pass" needs at least one attachment. Only applies
+  // Evidence gate: a manual "Pass" needs evidence — either an execution
+  // attachment, or an image embedded in a step's Actual Result. Only applies
   // here, so DeviceCloud automation (which writes executions directly, and has
   // the console_url as its evidence) is unaffected.
   if (patch.status === "pass" && ex._count.attachmentFiles === 0) {
-    return { error: "Attach evidence (a file) before marking this case as Passed" };
+    // Prefer the incoming stepResults (same save), else what's already stored.
+    const results =
+      "stepResults" in patch ? patch.stepResults : ex.stepResults;
+    if (!stepResultsHaveImage(results)) {
+      return {
+        error:
+          "Add evidence (an attachment or an image in the actual result) before marking this case as Passed",
+      };
+    }
   }
 
   const data: Record<string, unknown> = {};

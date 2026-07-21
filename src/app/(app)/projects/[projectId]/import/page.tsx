@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth";
 import { ImportPanel } from "./import-panel";
+import { ArrowLeft } from "@/components/icons";
 
 export default async function ImportPage({
   params,
@@ -22,9 +23,9 @@ export default async function ImportPage({
       <div>
         <Link
           href={`/projects/${projectId}`}
-          className="text-sm text-subtle transition-colors hover:text-fg"
+          className="inline-flex items-center gap-1.5 text-sm text-subtle transition-colors hover:text-fg"
         >
-          ← {project.name}
+          <ArrowLeft size={14} /> {project.name}
         </Link>
         <h1 className="mt-1 text-2xl font-bold text-fg">Import from Zephyr</h1>
         <p className="mt-1 text-sm text-muted">

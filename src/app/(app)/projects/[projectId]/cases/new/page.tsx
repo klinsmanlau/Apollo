@@ -5,6 +5,7 @@ import { requireUser, getProjectRole, roleAtLeast } from "@/lib/auth";
 import { buildSuiteTree, flattenForSelect } from "@/lib/suites";
 import { createCase } from "@/lib/actions/cases";
 import { CaseForm } from "../case-form";
+import { ArrowLeft } from "@/components/icons";
 
 export default async function NewCasePage({
   params,
@@ -32,9 +33,9 @@ export default async function NewCasePage({
       <div>
         <Link
           href={`/projects/${projectId}`}
-          className="text-sm text-subtle transition-colors hover:text-fg"
+          className="inline-flex items-center gap-1.5 text-sm text-subtle transition-colors hover:text-fg"
         >
-          ← {project.name}
+          <ArrowLeft size={14} /> {project.name}
         </Link>
         <h1 className="mt-1 text-2xl font-bold text-fg">New test case</h1>
       </div>

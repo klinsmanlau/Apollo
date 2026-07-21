@@ -20,7 +20,7 @@ export function NewCaseModal({
     <>
       <button
         onClick={() => setOpen(true)}
-        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-fg transition-all hover:opacity-90 active:scale-[0.98]"
+        className="btn btn-primary"
       >
         + New test case
       </button>

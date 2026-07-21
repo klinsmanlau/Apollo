@@ -8,8 +8,20 @@ import { recordExecution } from "@/lib/actions/cycles";
 import { EXEC_STATUS_META, execMeta } from "@/lib/exec-status";
 import type { Priority, ExecutionStatus } from "@prisma/client";
 import type { Step } from "@/lib/validation";
+import { ArrowLeft, Ban, Check, ChevronDown, ChevronRight, Flag, Pause, Play, X } from "@/components/icons";
+import { RichTextEditor } from "@/components/rich-text-editor";
 
-type StepResult = { status: string };
+type StepResult = { status: string; actual?: string };
+
+/** Evidence for a manual Pass: an execution attachment, or an image embedded
+ *  in any step's Actual Result. Kept in sync with the server-side gate. */
+function hasEvidence(e: {
+  attachments: { id: string }[];
+  stepResults: StepResult[];
+}): boolean {
+  if (e.attachments.length > 0) return true;
+  return (e.stepResults ?? []).some((r) => /<img\b/i.test(r?.actual ?? ""));
+}
 
 export type AttachmentMeta = {
   id: string;
@@ -175,7 +187,7 @@ function AttachmentsSection({
                 title="Remove attachment"
                 className="absolute -right-1.5 -top-1.5 hidden h-5 w-5 items-center justify-center rounded-full border border-line bg-surface text-[10px] text-subtle shadow-sm hover:text-red-500 group-hover:flex"
               >
-                ✕
+                <X size={13} />
               </button>
             </li>
           ))}
@@ -253,7 +265,7 @@ function Section({
           onClick={() => setOpen((o) => !o)}
           className="flex items-center gap-1.5 text-sm font-semibold text-fg"
         >
-          <span className="text-xs text-subtle">{open ? "▾" : "▸"}</span>
+          <span className="text-xs text-subtle">{open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</span>
           {title}
         </button>
         {right && <div className="ml-auto">{right}</div>}
@@ -281,7 +293,7 @@ function StatusDropdown({
         onClick={() => setOpen((o) => !o)}
         className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-semibold ${cur.pill}`}
       >
-        {cur.label} ▾
+        {cur.label} <ChevronDown size={12} />
       </button>
       {open && (
         <>
@@ -294,7 +306,7 @@ function StatusDropdown({
                 <button
                   key={s.value}
                   disabled={locked}
-                  title={locked ? "Attach evidence before marking as Passed" : undefined}
+                  title={locked ? "Add evidence (an attachment or an image in the actual result) before marking as Passed" : undefined}
                   onClick={() => {
                     if (locked) return;
                     onChange(s.value);
@@ -324,6 +336,38 @@ function StatusDropdown({
 const inlineCls =
   "w-full rounded-md border border-transparent bg-transparent px-2 py-1.5 text-sm text-fg transition-colors hover:bg-surface-muted focus:border-line focus:bg-surface focus:outline-none placeholder:text-subtle";
 const labelCls = "mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted";
+
+/** One step-status toggle. Fixed 26px square with centred icon so the three
+ *  stack in a straight vertical line regardless of glyph. */
+function StepStatusButton({
+  active,
+  onClick,
+  title,
+  activeCls,
+  idleCls,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  title: string;
+  activeCls: string;
+  idleCls: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      aria-pressed={active}
+      className={`flex h-6 w-6 items-center justify-center rounded transition-colors ${
+        active ? activeCls : idleCls
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
 
 export function TestPlayer({
   projectId,
@@ -410,12 +454,23 @@ export function TestPlayer({
     const results = [...(e.stepResults ?? [])];
     while (results.length < e.caseSteps.length) results.push({ status: "" });
     results[stepIndex] = {
+      // Toggle the status, but never lose the typed Actual Result.
       status: results[stepIndex]?.status === status ? "" : status,
+      actual: results[stepIndex]?.actual,
     };
     patchExec(execId, {
       stepResults: results,
       status: deriveStatus(e.caseSteps, results),
     });
+  }
+
+  function setStepActual(execId: string, stepIndex: number, html: string) {
+    const e = execs.find((x) => x.id === execId)!;
+    const results = [...(e.stepResults ?? [])];
+    while (results.length < e.caseSteps.length) results.push({ status: "" });
+    if ((results[stepIndex]?.actual ?? "") === html) return; // no change
+    results[stepIndex] = { status: results[stepIndex]?.status ?? "", actual: html };
+    patchExec(execId, { stepResults: results });
   }
 
   const assignedCount = useMemo(
@@ -437,18 +492,39 @@ export function TestPlayer({
     [execs, search, assignedToMe, currentUserName]
   );
 
-  const groups = useMemo(() => {
-    const keyOf = (e: PlayerExec): string => {
-      switch (groupBy) {
-        case "status": return e.status;
-        case "tester": return e.assignedToName || "Unassigned";
-        case "environment": return e.environment || "None";
-        case "priority": return e.casePriority;
-        case "component": return e.caseComponent || "None";
-        case "folder": return e.caseFolder || "None";
-        default: return "";
-      }
+  // Freeze each case's grouping bucket so recording a status doesn't make the
+  // case hop to another group mid-session (the "don't rearrange on status
+  // change" behaviour). The snapshot refreshes only when the grouping dimension
+  // changes or the case set changes (add / remove / refresh) — never on a plain
+  // status edit. Reading live status still updates the row's own colour/badge.
+  const liveGroupKey = (e: PlayerExec): string => {
+    switch (groupBy) {
+      case "status": return e.status;
+      case "tester": return e.assignedToName || "Unassigned";
+      case "environment": return e.environment || "None";
+      case "priority": return e.casePriority;
+      case "component": return e.caseComponent || "None";
+      case "folder": return e.caseFolder || "None";
+      default: return "";
+    }
+  };
+  const groupSnapshot = useRef<{ gb: GroupBy; sig: string; keys: Map<string, string> }>({
+    gb: groupBy,
+    sig: "",
+    keys: new Map(),
+  });
+  const idSig = execs.map((e) => e.id).join(",");
+  if (groupSnapshot.current.gb !== groupBy || groupSnapshot.current.sig !== idSig) {
+    groupSnapshot.current = {
+      gb: groupBy,
+      sig: idSig,
+      keys: new Map(execs.map((e) => [e.id, liveGroupKey(e)])),
     };
+  }
+
+  const groups = useMemo(() => {
+    const keyOf = (e: PlayerExec): string =>
+      groupSnapshot.current.keys.get(e.id) ?? liveGroupKey(e);
     const labelOf = (key: string): string => {
       if (groupBy === "status") return execMeta(key as ExecutionStatus).label;
       if (groupBy === "priority") return PRIORITY_LABEL[key as Priority];
@@ -473,9 +549,9 @@ export function TestPlayer({
     if (pos < 0) return;
     const targets = flat.slice(pos);
 
-    // Passing requires evidence: skip cases with no attachment and say which.
+    // Passing requires evidence: skip cases with none and say which.
     const allowed =
-      status === "pass" ? targets.filter((e) => e.attachments.length > 0) : targets;
+      status === "pass" ? targets.filter(hasEvidence) : targets;
     const blocked = targets.length - allowed.length;
 
     const ids = new Set(allowed.map((e) => e.id));
@@ -484,7 +560,7 @@ export function TestPlayer({
     setSetBelowFor(null);
     setActionError(
       blocked > 0
-        ? `${blocked} case${blocked === 1 ? "" : "s"} skipped — attach evidence before marking Passed.`
+        ? `${blocked} case${blocked === 1 ? "" : "s"} skipped — add evidence (an attachment or an image in the actual result) before marking Passed.`
         : null
     );
   }
@@ -503,12 +579,12 @@ export function TestPlayer({
           <div>
             <Link
               href={`/projects/${projectId}/cycles/${cycleKey}`}
-              className="text-sm text-subtle transition-colors hover:text-fg"
+              className="inline-flex items-center gap-1.5 text-sm text-subtle transition-colors hover:text-fg"
             >
-              ← {data.cycle.name} · Test Player
+              <ArrowLeft size={14} /> {data.cycle.name} · Test Player
             </Link>
             <h1 className="mt-0.5 flex items-center gap-2 text-2xl font-bold tracking-tight text-fg">
-              ▶ {data.cycle.name}
+              <Play size={13} /> {data.cycle.name}
             </h1>
             <p className="mt-1 text-xs text-muted">
               Planned: {data.cycle.startDate || "—"} → {data.cycle.endDate || "—"}
@@ -527,7 +603,7 @@ export function TestPlayer({
             </h2>
             <button
               onClick={() => goTo(0)}
-              className="rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
+              className="btn btn-sm btn-accent"
             >
               ✨ Run All
             </button>
@@ -546,7 +622,7 @@ export function TestPlayer({
                 onClick={() => setGroupOpen((o) => !o)}
                 className="rounded-md bg-surface-muted px-2 py-1 font-medium text-muted hover:text-fg"
               >
-                Group by: {GROUP_OPTIONS.find((o) => o.value === groupBy)!.label} ▾
+                Group by: {GROUP_OPTIONS.find((o) => o.value === groupBy)!.label} <ChevronDown size={12} />
               </button>
               {groupOpen && (
                 <>
@@ -606,7 +682,7 @@ export function TestPlayer({
                       >
                         <div className="flex items-center gap-1.5">
                           <span className={flagColor[e.casePriority]} title={e.casePriority}>
-                            ⚑
+                            <Flag size={12} />
                           </span>
                           <span className="truncate font-mono text-[11px] text-ring">
                             {e.caseKey ?? "—"}
@@ -622,7 +698,7 @@ export function TestPlayer({
                           }
                           className="text-[11px] text-subtle hover:text-fg"
                         >
-                          Set all below to: ▾
+                          Set all below to: <ChevronDown size={12} />
                         </button>
                         {setBelowFor === e.id && (
                           <>
@@ -672,7 +748,7 @@ export function TestPlayer({
                     className="shrink-0 opacity-70 hover:opacity-100"
                     aria-label="Dismiss"
                   >
-                    ✕
+                    <X size={13} />
                   </button>
                 </div>
               )}
@@ -691,7 +767,7 @@ export function TestPlayer({
                 <div className="flex items-center gap-2">
                   <StatusDropdown
                     value={cur.status}
-                    passLocked={cur.attachments.length === 0}
+                    passLocked={!hasEvidence(cur)}
                     onChange={(s) => patchExec(cur.id, { status: s })}
                   />
                   <button
@@ -699,7 +775,7 @@ export function TestPlayer({
                     className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface px-2.5 py-1.5 font-mono text-xs text-fg hover:bg-surface-muted"
                     title={running ? "Pause timer" : "Start timer"}
                   >
-                    {running ? "⏸" : "▶"} {fmt(elapsed)}
+                    {running ? <Pause size={12} /> : <Play size={12} />} {fmt(elapsed)}
                   </button>
                 </div>
               </div>
@@ -828,7 +904,7 @@ export function TestPlayer({
                 {cur.caseSteps.length === 0 ? (
                   <p className="text-sm text-subtle">This case has no step-by-step script.</p>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     {cur.caseSteps.map((s, i) => {
                       const st = cur.stepResults[i]?.status || "";
                       const borderCls =
@@ -842,34 +918,62 @@ export function TestPlayer({
                       return (
                         <div
                           key={i}
-                          className={`grid grid-cols-[2rem_1fr_1fr_1fr_auto] gap-3 rounded-md border border-line border-l-4 ${borderCls} p-2`}
+                          className={`overflow-hidden rounded-lg border border-line border-l-4 ${borderCls}`}
                         >
-                          <span className="pt-1.5 text-center text-sm text-subtle">{i + 1}</span>
-                          <div className="whitespace-pre-wrap py-1.5 text-sm text-fg">{s.action}</div>
-                          <div className="whitespace-pre-wrap py-1.5 text-sm text-muted">{s.testData || "None"}</div>
-                          <div className="whitespace-pre-wrap py-1.5 text-sm text-muted">{s.expected}</div>
-                          <div className="flex flex-col items-center gap-1 pt-1">
-                            <button
-                              onClick={() => setStep(cur.id, i, "pass")}
-                              title="Pass"
-                              className={`h-6 w-6 rounded ${st === "pass" ? "bg-green-600 text-white" : "text-green-600 hover:bg-green-50 dark:hover:bg-green-500/10"}`}
-                            >
-                              ✓
-                            </button>
-                            <button
-                              onClick={() => setStep(cur.id, i, "fail")}
-                              title="Fail"
-                              className={`h-6 w-6 rounded ${st === "fail" ? "bg-red-600 text-white" : "text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10"}`}
-                            >
-                              ✕
-                            </button>
-                            <button
-                              onClick={() => setStep(cur.id, i, "blocked")}
-                              title="Blocked"
-                              className={`h-6 w-6 rounded ${st === "blocked" ? "bg-blue-600 text-white" : "text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10"}`}
-                            >
-                              ⊘
-                            </button>
+                          <div className="grid grid-cols-[2rem_1fr_1fr_1fr_auto] gap-3 p-2">
+                            <span className="pt-1.5 text-center text-sm font-medium text-subtle">
+                              {i + 1}
+                            </span>
+                            <div>
+                              <p className={labelCls}>Step</p>
+                              <div className="whitespace-pre-wrap text-sm text-fg">{s.action}</div>
+                            </div>
+                            <div>
+                              <p className={labelCls}>Test Data</p>
+                              <div className="whitespace-pre-wrap text-sm text-muted">{s.testData || "None"}</div>
+                            </div>
+                            <div>
+                              <p className={labelCls}>Expected Result</p>
+                              <div className="whitespace-pre-wrap text-sm text-muted">{s.expected}</div>
+                            </div>
+                            {/* Status rail — icons share one box size + centering
+                                so Pass/Fail/Blocked line up vertically. */}
+                            <div className="flex flex-col items-center gap-1">
+                              <StepStatusButton
+                                active={st === "pass"}
+                                onClick={() => setStep(cur.id, i, "pass")}
+                                title="Pass"
+                                activeCls="bg-green-600 text-white"
+                                idleCls="text-green-600 hover:bg-green-500/10"
+                              >
+                                <Check size={15} />
+                              </StepStatusButton>
+                              <StepStatusButton
+                                active={st === "fail"}
+                                onClick={() => setStep(cur.id, i, "fail")}
+                                title="Fail"
+                                activeCls="bg-red-600 text-white"
+                                idleCls="text-red-600 hover:bg-red-500/10"
+                              >
+                                <X size={15} />
+                              </StepStatusButton>
+                              <StepStatusButton
+                                active={st === "blocked"}
+                                onClick={() => setStep(cur.id, i, "blocked")}
+                                title="Blocked"
+                                activeCls="bg-blue-600 text-white"
+                                idleCls="text-blue-600 hover:bg-blue-500/10"
+                              >
+                                <Ban size={15} />
+                              </StepStatusButton>
+                            </div>
+                          </div>
+                          <div className="border-t border-line bg-surface-muted/30 px-2 py-2">
+                            <p className={`${labelCls} px-1`}>Actual Result</p>
+                            <RichTextEditor
+                              value={cur.stepResults[i]?.actual ?? ""}
+                              onChange={(html) => setStepActual(cur.id, i, html)}
+                            />
                           </div>
                         </div>
                       );
@@ -883,9 +987,9 @@ export function TestPlayer({
                 <button
                   disabled={idx === 0}
                   onClick={() => goTo(idx - 1)}
-                  className="rounded-md border border-line bg-surface px-4 py-2 text-sm font-medium text-fg hover:bg-surface-muted disabled:opacity-40"
+                  className="btn btn-secondary"
                 >
-                  ← Previous
+                  <ArrowLeft size={14} /> Previous
                 </button>
                 <span className="text-xs text-subtle">
                   {idx + 1} of {execs.length}
@@ -893,9 +997,9 @@ export function TestPlayer({
                 <button
                   disabled={idx >= execs.length - 1}
                   onClick={() => goTo(idx + 1)}
-                  className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-fg hover:opacity-90 disabled:opacity-40"
+                  className="btn btn-primary"
                 >
-                  Next →
+                  Next <ChevronRight size={13} />
                 </button>
               </div>
             </div>

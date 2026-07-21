@@ -2,6 +2,7 @@ import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
 import { getCurrentUser } from "@/lib/auth";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Logo } from "@/components/logo";
 
 export default async function AppLayout({
   children,
@@ -13,23 +14,29 @@ export default async function AppLayout({
 
   return (
     <div className="flex h-dvh flex-col">
-      <header className="themed z-40 shrink-0 border-b border-line bg-surface">
-        <div className="flex h-14 items-center justify-between px-6">
-          <div className="flex items-center gap-6">
-            <Link href="/projects" className="text-lg font-semibold text-fg">
-              Apollo
+      <header className="themed z-40 shrink-0 border-b border-line bg-surface/85 backdrop-blur-xl">
+        <div className="flex h-16 items-center justify-between px-6">
+          <div className="flex items-center gap-7">
+            <Link
+              href="/projects"
+              className="rounded-md transition-opacity hover:opacity-80"
+            >
+              <Logo />
             </Link>
-            <nav className="flex items-center gap-4 text-sm text-muted">
-              <Link href="/projects" className="transition-colors hover:text-fg">
+            <nav className="flex items-center gap-1 text-sm">
+              <Link
+                href="/projects"
+                className="rounded-md px-2.5 py-1.5 font-medium text-muted transition-colors hover:bg-surface-muted hover:text-fg"
+              >
                 Projects
               </Link>
             </nav>
           </div>
           <div className="flex items-center gap-3">
             {user && (
-              <span className="hidden text-sm text-muted sm:inline">
+              <span className="hidden items-center gap-2 text-sm text-muted sm:flex">
                 {user.name ?? user.email}
-                <span className="ml-2 rounded bg-surface-muted px-1.5 py-0.5 text-xs font-medium text-muted">
+                <span className="rounded-md border border-line bg-surface-muted px-1.5 py-0.5 text-[11px] font-medium capitalize text-subtle">
                   {user.role}
                 </span>
               </span>

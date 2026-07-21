@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { X } from "@/components/icons";
 
 /**
  * Shared pop-up window. Every modal in the app should render through this so
@@ -71,21 +72,21 @@ export function Modal({
       aria-label={title}
     >
       <div
-        className={`w-full ${maxWidth} rounded-xl border border-line bg-surface shadow-2xl shadow-black/20 ${
+        className={`w-full ${maxWidth} rounded-2xl border border-line bg-surface shadow-2xl shadow-black/25 ${
           closing ? "animate-modal-out" : "animate-modal"
         }`}
       >
-        <div className="flex items-center justify-between border-b border-line px-6 py-4">
-          <div>
-            <h2 className="text-lg font-semibold text-fg">{title}</h2>
-            {description && <p className="text-xs text-muted">{description}</p>}
+        <div className="flex items-start justify-between gap-4 border-b border-line px-6 py-4">
+          <div className="min-w-0">
+            <h2 className="text-[17px] font-semibold tracking-tight text-fg">
+              {title}
+            </h2>
+            {description && (
+              <p className="mt-0.5 text-xs text-muted">{description}</p>
+            )}
           </div>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="rounded-md p-1 text-subtle transition-colors hover:bg-surface-muted hover:text-fg"
-          >
-            ✕
+          <button onClick={onClose} aria-label="Close" className="btn-icon -mr-1">
+            <X size={16} />
           </button>
         </div>
         <div className="max-h-[78vh] overflow-y-auto px-6 py-5">{children}</div>

@@ -9,6 +9,8 @@ import { RefreshButton } from "@/components/refresh-button";
 import { CaseFilterButton } from "./case-filter";
 import type { CaseFilter } from "@/lib/case-filters";
 import { NewCaseModal } from "./new-case-modal";
+import { useConfirm } from "@/components/confirm-dialog";
+import { Archive, ArrowLeft, ChevronDown, ChevronRight, ChevronUp, X } from "@/components/icons";
 import {
   moveCase,
   moveSuite,
@@ -82,7 +84,7 @@ function FolderInput({
         className="shrink-0 rounded p-1 text-subtle hover:text-fg"
         aria-label="Cancel"
       >
-        ✕
+        <X size={13} />
       </button>
     </div>
   );
@@ -170,6 +172,7 @@ export function ProjectWorkspace({
   const containerRef = useRef<HTMLDivElement>(null);
   const [leftWidth, setLeftWidth] = useState(DEFAULT_LEFT);
   const [resizing, setResizing] = useState(false);
+  const { confirm, dialog } = useConfirm();
 
   // Restore saved width after mount (avoids SSR hydration mismatch).
   useEffect(() => {
@@ -577,7 +580,7 @@ export function ProjectWorkspace({
                 }}
                 className="flex w-6 shrink-0 items-center justify-center text-xl leading-none text-subtle transition-colors hover:text-fg"
               >
-                {open ? "▾" : "▸"}
+                {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
               </button>
             ) : (
               <span className="w-6 shrink-0 text-center text-xl leading-none text-subtle">
@@ -694,13 +697,19 @@ export function ProjectWorkspace({
             <Item
               onClick={() => {
                 setOpenMenu(null);
-                if (
-                  confirm(
-                    `Delete “${suite.name}” and all its subfolders and cases?`
-                  )
-                ) {
-                  run(() => removeSuite(projectId, suite.id));
-                }
+                confirm({
+                  title: "Delete folder",
+                  body: (
+                    <>
+                      Delete <strong className="text-fg">{suite.name}</strong> and
+                      all of its subfolders and test cases? This can&rsquo;t be
+                      undone.
+                    </>
+                  ),
+                  confirmLabel: "Delete folder",
+                  destructive: true,
+                  onConfirm: () => run(() => removeSuite(projectId, suite.id)),
+                });
               }}
             >
               Delete
@@ -805,7 +814,7 @@ export function ProjectWorkspace({
                 className="shrink-0 rounded p-0.5 text-subtle hover:text-fg"
                 aria-label="Close search"
               >
-                ✕
+                <X size={13} />
               </button>
             </div>
           ) : (
@@ -813,7 +822,7 @@ export function ProjectWorkspace({
               {canEdit && (
                 <button
                   onClick={() => setCreating({ parent: null })}
-                  className="h-8 shrink-0 rounded-md bg-primary px-3 text-xs font-medium text-primary-fg transition-all hover:opacity-90 active:scale-95"
+                  className="btn btn-sm btn-primary h-8 shrink-0 px-3"
                 >
                   + New Folder
                 </button>
@@ -911,7 +920,7 @@ export function ProjectWorkspace({
                 : "text-muted hover:bg-surface-muted hover:text-fg"
             }`}
           >
-            <span>🗄 Archived test cases</span>
+            <span className="inline-flex items-center gap-1.5"><Archive size={14} /> Archived test cases</span>
             <span className="text-xs text-subtle">{archivedCount}</span>
           </div>
         </div>
@@ -975,7 +984,7 @@ export function ProjectWorkspace({
                       setSelected(new Set());
                     })
                   }
-                  className="rounded-md border border-line bg-surface px-2.5 py-1 text-xs font-medium text-fg transition-colors hover:bg-surface-muted"
+                  className="btn btn-sm btn-secondary"
                 >
                   Restore
                 </button>
@@ -989,7 +998,7 @@ export function ProjectWorkspace({
                       setSelected(new Set());
                     })
                   }
-                  className="rounded-md border border-line bg-surface px-2.5 py-1 text-xs font-medium text-fg transition-colors hover:bg-surface-muted"
+                  className="btn btn-sm btn-secondary"
                 >
                   Clone
                 </button>
@@ -1000,7 +1009,7 @@ export function ProjectWorkspace({
                       setSelected(new Set());
                     })
                   }
-                  className="rounded-md border border-line bg-surface px-2.5 py-1 text-xs font-medium text-fg transition-colors hover:bg-surface-muted"
+                  className="btn btn-sm btn-secondary"
                 >
                   Archive
                 </button>
@@ -1009,9 +1018,9 @@ export function ProjectWorkspace({
             <div className="relative">
               <button
                 onClick={() => setExportOpen((o) => !o)}
-                className="rounded-md border border-line bg-surface px-2.5 py-1 text-xs font-medium text-fg transition-colors hover:bg-surface-muted"
+                className="btn btn-sm btn-secondary"
               >
-                Export ▾
+                Export <ChevronDown size={12} />
               </button>
               {exportOpen && (
                 <div className="absolute right-0 z-10 mt-1 w-36 overflow-hidden rounded-md border border-line bg-surface shadow-lg">
@@ -1089,8 +1098,8 @@ export function ProjectWorkspace({
                         <span className="text-[10px] text-subtle">
                           {sortField === field
                             ? sortDir === "asc"
-                              ? "▲"
-                              : "▼"
+                              ? <ChevronUp size={12} />
+                              : <ChevronDown size={12} />
                             : ""}
                         </span>
                       </button>
@@ -1186,7 +1195,7 @@ export function ProjectWorkspace({
                   onClick={() => goToPage(page - 1)}
                   className="rounded px-2 py-1 hover:bg-surface-muted disabled:opacity-40"
                 >
-                  ← Prev
+                  <ArrowLeft size={14} /> Prev
                 </button>
                 <span>
                   {page + 1}/{pageCount}
@@ -1196,13 +1205,14 @@ export function ProjectWorkspace({
                   onClick={() => goToPage(page + 1)}
                   className="rounded px-2 py-1 hover:bg-surface-muted disabled:opacity-40"
                 >
-                  Next →
+                  Next <ChevronRight size={13} />
                 </button>
               </div>
             )}
           </div>
         )}
       </section>
+      {dialog}
     </div>
   );
 }

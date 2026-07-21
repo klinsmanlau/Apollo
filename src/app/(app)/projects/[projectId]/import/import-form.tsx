@@ -44,7 +44,7 @@ export function ImportForm({
           </div>
           <button
             type="submit"
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-fg transition-all hover:opacity-90 active:scale-[0.98]"
+            className="btn btn-primary"
           >
             Import
           </button>
@@ -127,21 +127,21 @@ export function ImportForm({
             {onViewResults ? (
               <button
                 onClick={onViewResults}
-                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-fg transition-all hover:opacity-90 active:scale-[0.98]"
+                className="btn btn-primary"
               >
                 View imported cases →
               </button>
             ) : (
               <Link
                 href={`/projects/${projectId}`}
-                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-fg transition-all hover:opacity-90"
+                className="btn btn-primary"
               >
                 View imported cases →
               </Link>
             )}
             <button
               onClick={imp.reset}
-              className="rounded-md border border-line bg-surface px-4 py-2 text-sm font-medium text-fg transition-colors hover:bg-surface-muted"
+              className="btn btn-secondary"
             >
               Import another file
             </button>

@@ -93,7 +93,7 @@ export function NewCycleModal({
           reset();
           setOpen(true);
         }}
-        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-fg transition-all hover:opacity-90 active:scale-[0.98]"
+        className="btn btn-primary"
       >
         + New Test Cycle
       </button>
@@ -222,14 +222,14 @@ export function NewCycleModal({
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="rounded-md border border-line bg-surface px-4 py-2 text-sm font-medium text-fg transition-colors hover:bg-surface-muted"
+              className="btn btn-secondary"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={busy}
-              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-fg transition-all hover:opacity-90 disabled:opacity-60"
+              className="btn btn-primary"
             >
               {busy ? "Creating…" : "Create cycle"}
             </button>

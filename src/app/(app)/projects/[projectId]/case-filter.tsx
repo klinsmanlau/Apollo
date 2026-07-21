@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { X } from "@/components/icons";
 import {
   FILTER_FIELDS,
   filterFieldByKey,
@@ -191,7 +192,7 @@ function Criterion({
           className="text-xs text-subtle hover:text-fg"
           aria-label={`Remove ${def.label} filter`}
         >
-          ✕
+          <X size={13} />
         </button>
       </div>
 

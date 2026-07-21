@@ -17,13 +17,13 @@ export default async function Home() {
       <div className="animate-rise mt-8 flex gap-3" style={{ animationDelay: "120ms" }}>
         <Link
           href="/sign-in"
-          className="rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-primary-fg transition-all hover:opacity-90 active:scale-[0.98]"
+          className="btn btn-primary px-5 py-2.5"
         >
           Sign in
         </Link>
         <Link
           href="/sign-up"
-          className="rounded-md border border-line bg-surface px-5 py-2.5 text-sm font-medium text-fg transition-colors hover:bg-surface-muted"
+          className="btn btn-secondary px-5 py-2.5"
         >
           Create account
         </Link>

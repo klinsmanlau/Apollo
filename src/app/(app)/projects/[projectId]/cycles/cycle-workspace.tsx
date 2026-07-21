@@ -7,6 +7,8 @@ import type { CycleRow } from "@/lib/cycles-query";
 import { cloneCycles, deleteCycles, addCycleFolder, removeCycleFolder } from "@/lib/actions/cycles";
 import { NewCycleModal, type CycleUser } from "./new-cycle-modal";
 import { RefreshButton } from "@/components/refresh-button";
+import { useConfirm } from "@/components/confirm-dialog";
+import { ArrowLeft, ChevronDown, ChevronRight, ChevronUp, Play, X } from "@/components/icons";
 
 export type WFolder = { id: string; name: string; parentFolderId: string | null };
 
@@ -92,6 +94,7 @@ export function CycleWorkspace({
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadAbort = useRef<AbortController | null>(null);
   const sortRef = useRef<{ field: SortField | null; dir: SortDir }>({ field: null, dir: "asc" });
+  const { confirm, dialog } = useConfirm();
 
   const childrenOf = useMemo(() => {
     const m = new Map<string | null, WFolder[]>();
@@ -242,7 +245,7 @@ export function CycleWorkspace({
               }}
               className="flex w-5 shrink-0 items-center justify-center text-base leading-none text-subtle"
             >
-              {open ? "▾" : "▸"}
+              {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
             </button>
           ) : (
             <span className="w-5 shrink-0 text-center text-subtle">•</span>
@@ -255,13 +258,23 @@ export function CycleWorkspace({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                if (confirm(`Delete folder "${folder.name}" and its subfolders?`))
-                  run(() => removeCycleFolder(projectId, folder.id));
+                confirm({
+                  title: "Delete folder",
+                  body: (
+                    <>
+                      Delete <strong className="text-fg">{folder.name}</strong> and
+                      all of its subfolders? This can&rsquo;t be undone.
+                    </>
+                  ),
+                  confirmLabel: "Delete folder",
+                  destructive: true,
+                  onConfirm: () => run(() => removeCycleFolder(projectId, folder.id)),
+                });
               }}
               className="ml-auto hidden text-xs text-subtle hover:text-red-500 group-hover:inline"
               title="Delete folder"
             >
-              ✕
+              <X size={13} />
             </button>
           )}
         </div>
@@ -284,7 +297,7 @@ export function CycleWorkspace({
           {canEdit && (
             <button
               onClick={() => setCreating(true)}
-              className="h-8 shrink-0 rounded-md bg-primary px-3 text-xs font-medium text-primary-fg hover:opacity-90"
+              className="btn btn-sm btn-primary h-8 shrink-0 px-3"
             >
               + New Folder
             </button>
@@ -364,7 +377,7 @@ export function CycleWorkspace({
                     setSelected(new Set());
                   })
                 }
-                className="rounded-md border border-line bg-surface px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface-muted"
+                className="btn btn-sm btn-secondary"
               >
                 Clone
               </button>
@@ -372,11 +385,17 @@ export function CycleWorkspace({
             {canDelete && (
               <button
                 onClick={() => {
-                  if (confirm(`Delete ${selected.size} test cycle(s)?`))
-                    run(async () => {
-                      await deleteCycles(projectId, selectedIds);
-                      setSelected(new Set());
-                    });
+                  confirm({
+                    title: "Delete test cycles",
+                    body: `Delete ${selected.size} test cycle${selected.size === 1 ? "" : "s"} and their recorded results? This can't be undone.`,
+                    confirmLabel: "Delete",
+                    destructive: true,
+                    onConfirm: () =>
+                      run(async () => {
+                        await deleteCycles(projectId, selectedIds);
+                        setSelected(new Set());
+                      }),
+                  });
                 }}
                 className="rounded-md border border-red-200 bg-surface px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-500/30 dark:text-red-400"
               >
@@ -414,12 +433,12 @@ export function CycleWorkspace({
                       <th className="w-8 px-1 py-2" />
                       <th className="px-2 py-2 text-left font-semibold">
                         <button onClick={() => onSort("key")} className="hover:text-fg">
-                          Key {sortField === "key" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                          Key {sortField === "key" ? (sortDir === "asc" ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : null}
                         </button>
                       </th>
                       <th className="px-2 py-2 text-left font-semibold">
                         <button onClick={() => onSort("name")} className="hover:text-fg">
-                          Name {sortField === "name" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                          Name {sortField === "name" ? (sortDir === "asc" ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : null}
                         </button>
                       </th>
                       <th className="px-2 py-2 text-left font-semibold">Progress</th>
@@ -453,7 +472,7 @@ export function CycleWorkspace({
                             className="text-muted hover:text-fg"
                             title="Run cycle"
                           >
-                            ▶
+                            <Play size={12} />
                           </Link>
                         </td>
                         <td className="whitespace-nowrap px-2 py-2">
@@ -508,7 +527,7 @@ export function CycleWorkspace({
                   onClick={() => goToPage(page - 1)}
                   className="rounded px-2 py-1 hover:bg-surface-muted disabled:opacity-40"
                 >
-                  ← Prev
+                  <ArrowLeft size={14} /> Prev
                 </button>
                 <span>
                   {page + 1}/{pageCount}
@@ -518,13 +537,14 @@ export function CycleWorkspace({
                   onClick={() => goToPage(page + 1)}
                   className="rounded px-2 py-1 hover:bg-surface-muted disabled:opacity-40"
                 >
-                  Next →
+                  Next <ChevronRight size={13} />
                 </button>
               </div>
             )}
           </div>
         )}
       </section>
+      {dialog}
     </div>
   );
 }

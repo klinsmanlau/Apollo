@@ -3,38 +3,51 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/modal";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { Upload } from "@/components/icons";
 import { ImportForm } from "./import/import-form";
 import { useImport, formatEta } from "./use-import";
 
 export function ImportModal({ projectId }: { projectId: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [confirmClose, setConfirmClose] = useState(false);
   // State lives here (not in the modal body) so the import survives closing.
   const imp = useImport(projectId, () => router.refresh());
 
-  function requestClose() {
-    if (
-      imp.busy &&
-      !confirm(
-        "Import is still running. Close this window? It will keep importing in the background."
-      )
-    ) {
-      return;
-    }
+  function doClose() {
     setOpen(false);
     // If the import already finished, onComplete refreshed the page; only
     // refresh here for a clean (idle/done) close where nothing is in flight.
     if (!imp.busy && imp.status !== "done") router.refresh();
   }
 
+  function requestClose() {
+    // An in-flight import keeps running in the background; make sure that's a
+    // deliberate choice rather than a stray backdrop click.
+    if (imp.busy) {
+      setConfirmClose(true);
+      return;
+    }
+    doClose();
+  }
+
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        className="rounded-md border border-line bg-surface px-4 py-2 text-sm font-medium text-fg transition-colors hover:bg-surface-muted"
-      >
+      <button onClick={() => setOpen(true)} className="btn btn-secondary">
+        <Upload size={15} />
         Import from Excel
       </button>
+
+      <ConfirmDialog
+        open={confirmClose}
+        onClose={() => setConfirmClose(false)}
+        onConfirm={doClose}
+        title="Import still running"
+        body="Closing this window won't cancel the import — it will keep running in the background and the list will refresh when it finishes."
+        confirmLabel="Close anyway"
+        cancelLabel="Keep watching"
+      />
 
       <Modal
         open={open}
@@ -98,7 +111,7 @@ export function ImportModal({ projectId }: { projectId: string }) {
           <div className="mt-2 flex gap-2">
             <button
               onClick={() => setOpen(true)}
-              className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-fg hover:opacity-90"
+              className="btn btn-sm btn-primary"
             >
               Details
             </button>

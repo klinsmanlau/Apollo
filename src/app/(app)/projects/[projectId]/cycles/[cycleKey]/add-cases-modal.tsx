@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Modal } from "@/components/modal";
 import { addCasesToCycle } from "@/lib/actions/cycles";
+import { ArrowLeft, ChevronRight } from "@/components/icons";
 
 type CaseLite = { id: string; title: string; key: string | null };
 const PAGE = 50;
@@ -63,7 +64,7 @@ export function AddCasesModal({
     <>
       <button
         onClick={openModal}
-        className="shrink-0 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-fg transition-all hover:opacity-90 active:scale-[0.98]"
+        className="btn btn-primary shrink-0"
       >
         + Add test cases
       </button>
@@ -135,7 +136,7 @@ export function AddCasesModal({
                 }}
                 className="rounded px-2 py-1 hover:bg-surface-muted disabled:opacity-40"
               >
-                ← Prev
+                <ArrowLeft size={14} /> Prev
               </button>
               <button
                 disabled={(page + 1) * PAGE >= total}
@@ -146,21 +147,21 @@ export function AddCasesModal({
                 }}
                 className="rounded px-2 py-1 hover:bg-surface-muted disabled:opacity-40"
               >
-                Next →
+                Next <ChevronRight size={13} />
               </button>
             </div>
           </div>
           <div className="flex justify-end gap-2 border-t border-line pt-3">
             <button
               onClick={() => setOpen(false)}
-              className="rounded-md border border-line bg-surface px-4 py-2 text-sm font-medium text-fg transition-colors hover:bg-surface-muted"
+              className="btn btn-secondary"
             >
               Cancel
             </button>
             <button
               disabled={busy || sel.size === 0}
               onClick={confirm}
-              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-fg transition-all hover:opacity-90 disabled:opacity-60"
+              className="btn btn-primary"
             >
               {busy ? "Adding…" : `Add ${sel.size || ""} case${sel.size === 1 ? "" : "s"}`}
             </button>

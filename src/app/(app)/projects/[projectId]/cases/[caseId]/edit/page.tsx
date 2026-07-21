@@ -6,6 +6,7 @@ import { buildSuiteTree, flattenForSelect } from "@/lib/suites";
 import { updateCase } from "@/lib/actions/cases";
 import type { Step } from "@/lib/validation";
 import { CaseForm } from "../../case-form";
+import { ArrowLeft } from "@/components/icons";
 
 export default async function EditCasePage({
   params,
@@ -35,9 +36,9 @@ export default async function EditCasePage({
       <div>
         <Link
           href={`/projects/${projectId}/cases/${testCase.key ?? testCase.id}`}
-          className="text-sm text-subtle transition-colors hover:text-fg"
+          className="inline-flex items-center gap-1.5 text-sm text-subtle transition-colors hover:text-fg"
         >
-          ← Back to case
+          <ArrowLeft size={14} /> Back to case
         </Link>
         <h1 className="mt-1 text-2xl font-bold text-fg">Edit test case</h1>
       </div>

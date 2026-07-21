@@ -6,29 +6,55 @@
 /* Semantic color tokens — one set per theme. Components reference these via
    `bg-surface`, `text-fg`, `border-line`, etc. so they adapt automatically. */
 :root {
-  --app-bg: #f4f5f7;
+  --app-bg: #f5f6f8;
   --surface: #ffffff;
-  --surface-muted: #eaecf0;
-  --fg: #0b1017;
-  --muted: #3c4552;
-  --subtle: #667080;
-  --line: #cdd2d9;
-  --primary: #101317;
+  --surface-muted: #eef0f4;
+  --fg: #0a0e14;
+  /* Secondary/tertiary text — darkened for stronger contrast on white
+     (muted ~7.2:1, subtle ~4.9:1, both clearing WCAG AA for body text). */
+  --muted: #3a434f;
+  --subtle: #6b7480;
+  /* Hairline dividers. Deliberately light — heavy borders are the fastest way
+     to make an interface look cheap. Use --line-strong only where a divider
+     must carry real structural weight. */
+  --line: #dfe3e8;
+  --line-strong: #c8ced7;
+  --primary: #111418;
   --primary-fg: #ffffff;
   --ring: #4f46e5;
+  --accent-soft: #eef2ff;
+
+  /* Layered elevation. Two stacked shadows read as real depth; one flat blur
+     reads as a drop-shadow sticker. */
+  --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.07), 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-md: 0 4px 10px -2px rgba(16, 24, 40, 0.08),
+    0 2px 4px -2px rgba(16, 24, 40, 0.04);
+  --shadow-lg: 0 14px 28px -6px rgba(16, 24, 40, 0.12),
+    0 4px 8px -4px rgba(16, 24, 40, 0.06);
 }
 
 .dark {
-  --app-bg: #0a0c11;
-  --surface: #14171f;
-  --surface-muted: #232936;
-  --fg: #f2f4f7;
-  --muted: #b6bfcd;
-  --subtle: #8792a2;
-  --line: #363d4b;
-  --primary: #f2f4f7;
-  --primary-fg: #14171f;
+  --app-bg: #0a0c10;
+  --surface: #12151c;
+  --surface-muted: #1c222c;
+  --fg: #f3f5f8;
+  /* Brighter secondary/tertiary text for stronger contrast on the dark
+     surface (muted clears AA, subtle sits just under for non-essential text). */
+  --muted: #bcc5d2;
+  --subtle: #8b96a6;
+  --line: #2a313d;
+  --line-strong: #3a4350;
+  --primary: #eef1f5;
+  --primary-fg: #12151c;
   --ring: #8b93f8;
+  --accent-soft: #1e1b4b;
+
+  /* Shadows carry less on dark surfaces, so they run deeper. */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 10px -2px rgba(0, 0, 0, 0.45), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 14px 28px -6px rgba(0, 0, 0, 0.55), 0 4px 8px -4px rgba(0, 0, 0, 0.35);
 }
 
 html {
@@ -51,6 +77,13 @@ html.dark {
   --color-primary: var(--primary);
   --color-primary-fg: var(--primary-fg);
   --color-ring: var(--ring);
+  --color-line-strong: var(--line-strong);
+  --color-accent-soft: var(--accent-soft);
+
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
 }
 
 body {
@@ -58,6 +91,30 @@ body {
   color: var(--fg);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     Helvetica, Arial, sans-serif;
+  /* Antialiasing + slightly tightened tracking is most of what separates a
+     "designed" product from a default-browser one. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.006em;
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: -0.021em;
+}
+
+/* Numbers in data tables should line up column-to-column. */
+table,
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* One consistent, visible keyboard-focus treatment everywhere. */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 /* Gentle cross-fade when the theme flips. */
@@ -70,12 +127,96 @@ body,
 /* Reusable surfaces so every form/card stays consistent across themes. */
 @layer components {
   .field {
-    @apply w-full rounded-md border border-line bg-surface px-3 py-2 text-sm text-fg placeholder:text-subtle transition-colors focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30;
+    @apply w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg placeholder:text-subtle transition-all focus:border-ring focus:outline-none focus:ring-4 focus:ring-ring/12;
+    box-shadow: var(--shadow-xs);
   }
   .card {
     @apply rounded-xl border border-line bg-surface;
+    box-shadow: var(--shadow-sm);
     transition: background-color 0.25s ease, border-color 0.25s ease,
-      color 0.25s ease;
+      color 0.25s ease, box-shadow 0.25s ease;
+  }
+
+  /* ---- Buttons -----------------------------------------------------------
+     One shape/size system; variants only change colour. `active:` nudge and
+     the disabled state are shared so every button in the app behaves alike. */
+  .btn {
+    @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium transition-all duration-150 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-45;
+  }
+  .btn-sm {
+    @apply gap-1 rounded-md px-2.5 py-1 text-xs;
+  }
+  .btn-primary {
+    @apply bg-primary text-primary-fg hover:opacity-90;
+    box-shadow: var(--shadow-xs);
+  }
+  .btn-accent {
+    @apply bg-ring text-white hover:opacity-90;
+    box-shadow: var(--shadow-xs);
+  }
+  .btn-secondary {
+    @apply border border-line bg-surface text-fg hover:bg-surface-muted;
+    box-shadow: var(--shadow-xs);
+  }
+  .btn-ghost {
+    @apply text-muted hover:bg-surface-muted hover:text-fg;
+  }
+  .btn-danger {
+    @apply border border-red-500/30 bg-surface text-red-600 hover:bg-red-500/10 dark:text-red-400;
+  }
+  .btn-danger-solid {
+    @apply bg-red-600 text-white hover:bg-red-700;
+    box-shadow: var(--shadow-xs);
+  }
+
+  /* Icon-only square button (menu triggers, close, toolbar actions). */
+  .btn-icon {
+    @apply inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-subtle transition-colors hover:bg-surface-muted hover:text-fg;
+  }
+
+  /* Rendered rich-text (the per-step Actual Result editor + read-only views). */
+  .prose-actual {
+    @apply leading-relaxed;
+  }
+  .prose-actual ul {
+    @apply my-1 list-disc pl-5;
+  }
+  .prose-actual ol {
+    @apply my-1 list-decimal pl-5;
+  }
+  .prose-actual a {
+    @apply text-ring underline;
+  }
+  .prose-actual code {
+    @apply rounded bg-surface-muted px-1 py-0.5 font-mono text-[0.85em];
+  }
+  .prose-actual pre {
+    @apply my-1.5 overflow-auto rounded-md bg-surface-muted p-2.5 font-mono text-xs;
+  }
+  .prose-actual pre code {
+    @apply bg-transparent p-0;
+  }
+  .prose-actual table {
+    @apply my-1.5 border-collapse;
+  }
+  .prose-actual th,
+  .prose-actual td {
+    @apply border border-line px-2 py-1 text-left;
+  }
+  .prose-actual th {
+    @apply bg-surface-muted font-semibold;
+  }
+  .prose-actual img {
+    @apply my-1 max-w-full rounded-md;
+  }
+
+  /* Floating panels: dropdown menus, popovers, context menus. */
+  .panel {
+    @apply overflow-hidden rounded-xl border border-line bg-surface py-1;
+    box-shadow: var(--shadow-lg);
+  }
+  .menu-item {
+    @apply flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-fg transition-colors hover:bg-surface-muted disabled:opacity-40 disabled:hover:bg-transparent;
   }
 }
 

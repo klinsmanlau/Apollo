@@ -9,6 +9,7 @@ import {
 } from "@/lib/cycles-query";
 import { ProjectTabs } from "../project-tabs";
 import { CycleWorkspace } from "./cycle-workspace";
+import { ArrowLeft } from "@/components/icons";
 
 export default async function CyclesPage({
   params,
@@ -59,9 +60,9 @@ export default async function CyclesPage({
       <div className="shrink-0">
         <Link
           href="/projects"
-          className="text-sm text-subtle transition-colors hover:text-fg"
+          className="inline-flex items-center gap-1.5 text-sm text-subtle transition-colors hover:text-fg"
         >
-          ← Projects
+          <ArrowLeft size={14} /> Projects
         </Link>
         <h1 className="mt-1 text-2xl font-bold text-fg">{project.name}</h1>
       </div>

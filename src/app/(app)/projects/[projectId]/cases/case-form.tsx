@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 import type { FormState } from "@/lib/actions/cases";
 import type { Step } from "@/lib/validation";
 import { SubmitButton } from "@/components/submit-button";
+import { X } from "@/components/icons";
 
 type CaseFormValues = {
   suiteId: string;
@@ -69,7 +70,7 @@ function ChipInput({
             onClick={() => onChange(values.filter((x) => x !== t))}
             className="text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-200"
           >
-            ✕
+            <X size={13} />
           </button>
         </span>
       ))}
@@ -341,7 +342,7 @@ export function CaseForm({
                   className="mt-1.5 px-2 text-subtle transition-colors hover:text-red-500"
                   title="Remove step"
                 >
-                  ✕
+                  <X size={13} />
                 </button>
               </div>
             ))}

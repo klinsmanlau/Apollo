@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser, getProjectRole } from "@/lib/auth";
 import { PriorityFlag, StatusBadge } from "@/components/ui";
 import { ProjectTabs } from "../project-tabs";
+import { ArrowLeft, Play } from "@/components/icons";
 
 export default async function MyWorkPage({
   params,
@@ -58,9 +59,9 @@ export default async function MyWorkPage({
       <div className="shrink-0">
         <Link
           href="/projects"
-          className="text-sm text-subtle transition-colors hover:text-fg"
+          className="inline-flex items-center gap-1.5 text-sm text-subtle transition-colors hover:text-fg"
         >
-          ← Projects
+          <ArrowLeft size={14} /> Projects
         </Link>
         <h1 className="mt-1 text-2xl font-bold text-fg">{project.name}</h1>
       </div>
@@ -71,7 +72,7 @@ export default async function MyWorkPage({
         <div className="mx-auto w-full max-w-4xl">
           <p className="mb-4 text-sm text-muted">
             {executions.length === 0
-              ? "No open executions are assigned to you in this project. 🎉"
+              ? "You have no open executions assigned in this project."
               : `${executions.length} open execution${executions.length === 1 ? "" : "s"} assigned to you.`}
           </p>
 
@@ -90,9 +91,9 @@ export default async function MyWorkPage({
                   </Link>
                   <Link
                     href={`/projects/${projectId}/cycles/${run.key ?? run.id}/play`}
-                    className="shrink-0 rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white transition-opacity hover:opacity-90"
+                    className="btn btn-sm btn-accent shrink-0"
                   >
-                    ▶ Play
+                    <Play size={12} /> Play
                   </Link>
                 </div>
                 <table className="w-full text-sm">

@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser, getProjectRole } from "@/lib/auth";
 import { ProjectTabs } from "../project-tabs";
 import { MembersPanel } from "./members-panel";
+import { ArrowLeft } from "@/components/icons";
 
 export default async function MembersPage({
   params,
@@ -38,9 +39,9 @@ export default async function MembersPage({
       <div className="shrink-0">
         <Link
           href="/projects"
-          className="text-sm text-subtle transition-colors hover:text-fg"
+          className="inline-flex items-center gap-1.5 text-sm text-subtle transition-colors hover:text-fg"
         >
-          ← Projects
+          <ArrowLeft size={14} /> Projects
         </Link>
         <h1 className="mt-1 text-2xl font-bold text-fg">{project.name}</h1>
       </div>
