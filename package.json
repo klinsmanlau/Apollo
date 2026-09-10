@@ -13,7 +13,8 @@
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
-    "zephyr:sync": "tsx prisma/zephyr-sync.ts"
+    "zephyr:sync": "tsx prisma/zephyr-sync.ts",
+    "zephyr:sync-cycles": "tsx prisma/zephyr-sync-cycles.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -21,6 +22,7 @@
   "dependencies": {
     "@clerk/nextjs": "^6.9.6",
     "@prisma/client": "^6.2.1",
+    "@supabase/supabase-js": "^2.110.7",
     "exceljs": "^4.4.0",
     "next": "^15.1.4",
     "react": "^19.0.0",

@@ -35,16 +35,27 @@ type Cmd =
 export function RichTextEditor({
   value,
   onChange,
+  onImageUpload,
   placeholder = "Click to type the actual result",
   minHeight = 92,
 }: {
   value: string;
   onChange: (html: string) => void;
+  /**
+   * Upload a picked image file and return the URL to embed, or null to abort.
+   * When omitted, the image is embedded inline as a base64 data URL instead.
+   */
+  onImageUpload?: (file: File) => Promise<string | null>;
   placeholder?: string;
   minHeight?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  // The caret position at the moment the image tool is clicked — restored after
+  // the (blurring) file dialog closes so the image lands where the user was.
+  const savedRange = useRef<Range | null>(null);
   const [focused, setFocused] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [empty, setEmpty] = useState(!value || value === "<br>");
 
   // Seed the DOM once; thereafter the browser owns the content.
@@ -91,8 +102,36 @@ export function RichTextEditor({
   }
 
   function insertImage() {
-    const url = window.prompt("Image URL (or leave blank to cancel)", "https://");
-    if (url) exec("insertImage", url);
+    // Remember where the caret is, then open the OS file picker.
+    const sel = window.getSelection?.();
+    savedRange.current =
+      sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
+    fileRef.current?.click();
+  }
+
+  async function onImagePicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-picking the same file
+    if (!file) return;
+    setUploading(true);
+    try {
+      const url = onImageUpload
+        ? await onImageUpload(file)
+        : await fileToDataUrl(file);
+      if (!url) return;
+      // Restore focus + caret, insert, then persist (blur won't re-fire).
+      ref.current?.focus();
+      const sel = window.getSelection?.();
+      if (sel && savedRange.current) {
+        sel.removeAllRanges();
+        sel.addRange(savedRange.current);
+      }
+      document.execCommand("insertImage", false, url);
+      sync();
+      if (ref.current) onChange(ref.current.innerHTML);
+    } finally {
+      setUploading(false);
+    }
   }
 
   function insertCode() {
@@ -142,6 +181,13 @@ export function RichTextEditor({
         focused ? "border-ring ring-4 ring-ring/12" : "border-line"
       }`}
     >
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={onImagePicked}
+      />
       {focused && (
         <div className="flex flex-wrap items-center gap-0.5 border-b border-line bg-surface-muted/60 px-1.5 py-1">
           {TOOLS.map((t) => (
@@ -175,6 +221,11 @@ export function RichTextEditor({
             {placeholder}
           </span>
         )}
+        {uploading && (
+          <span className="pointer-events-none absolute right-2 top-2 z-10 rounded bg-surface px-1.5 py-0.5 text-[11px] text-subtle shadow-sm">
+            Uploading image…
+          </span>
+        )}
         <div
           ref={ref}
           contentEditable
@@ -206,4 +257,14 @@ function escapeHtml(s: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+/** Fallback embed when no uploader is supplied: inline base64 data URL. */
+function fileToDataUrl(file: File): Promise<string | null> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : null);
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
 }

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { requireProjectRole } from "@/lib/auth";
+import { signedUrl, deleteFromStorage } from "@/lib/storage";
 
 export const runtime = "nodejs";
 
@@ -29,26 +30,15 @@ export async function GET(
 
   const a = await prisma.attachment.findFirst({
     where: projectScope(projectId, attachmentId),
+    select: { storageKey: true },
   });
   if (!a) return new Response("Not found", { status: 404 });
 
-  const inline =
-    a.mimeType.startsWith("image/") ||
-    a.mimeType.startsWith("video/") ||
-    a.mimeType === "application/pdf" ||
-    a.mimeType.startsWith("text/");
-  const disposition = inline ? "inline" : "attachment";
-  // RFC 5987 encoding so odd characters in file names survive the header.
-  const safeName = encodeURIComponent(a.fileName).replace(/['()]/g, escape);
-
-  return new Response(Buffer.from(a.data), {
-    headers: {
-      "Content-Type": a.mimeType,
-      "Content-Length": String(a.size),
-      "Content-Disposition": `${disposition}; filename*=UTF-8''${safeName}`,
-      "Cache-Control": "private, max-age=3600",
-    },
-  });
+  // Access is gated by the role check above; the signed URL itself expires
+  // in an hour, so it can't be reshared as a durable link.
+  const url = await signedUrl(a.storageKey);
+  if (!url) return new Response("Storage unavailable", { status: 502 });
+  return Response.redirect(url, 307);
 }
 
 export async function DELETE(
@@ -62,9 +52,14 @@ export async function DELETE(
     return new Response("Not found", { status: 404 });
   }
 
-  const res = await prisma.attachment.deleteMany({
+  // Find first so we can clean up the bucket object after the row is gone.
+  const a = await prisma.attachment.findFirst({
     where: projectScope(projectId, attachmentId),
+    select: { id: true, storageKey: true },
   });
-  if (res.count === 0) return new Response("Not found", { status: 404 });
+  if (!a) return new Response("Not found", { status: 404 });
+
+  await prisma.attachment.delete({ where: { id: a.id } });
+  await deleteFromStorage(a.storageKey).catch(() => {});
   return Response.json({ ok: true });
 }

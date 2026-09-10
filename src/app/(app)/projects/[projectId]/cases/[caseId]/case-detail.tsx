@@ -168,6 +168,7 @@ export function CaseDetail({
   folderPath,
   users,
   executions,
+  returnTo,
 }: {
   projectId: string;
   initial: CaseData;
@@ -175,6 +176,9 @@ export function CaseDetail({
   folderPath: string;
   users: CaseUser[];
   executions: CaseExecRow[];
+  /** Set when this page was opened from a test cycle's case list — shows a
+   *  "Go Back" button that returns there instead of to the case's folder. */
+  returnTo?: string | null;
 }) {
   const [tab, setTab] = useState<Tab>("Details");
   const [c, setC] = useState<CaseData>(initial);
@@ -287,6 +291,14 @@ export function CaseDetail({
             <span className="text-xs text-subtle">
               {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved ✓" : ""}
             </span>
+            {returnTo && (
+              <Link
+                href={returnTo}
+                className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface px-3 py-1.5 text-sm font-medium text-fg transition-colors hover:bg-surface-muted"
+              >
+                <ArrowLeft size={14} /> Go Back
+              </Link>
+            )}
             <button
               onClick={() => setConfirmDelete(true)}
               className="rounded-md border border-red-200 bg-surface px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-500/10"

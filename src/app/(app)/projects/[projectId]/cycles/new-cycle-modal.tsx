@@ -33,6 +33,7 @@ export function NewCycleModal({
   const today = new Date().toISOString().slice(0, 10);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -65,25 +66,32 @@ export function NewCycleModal({
     setEndDate(today);
     setFolderId(defaultFolderId ?? "");
     setCustom({});
+    setError(null);
   }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
     setBusy(true);
-    const res = await createCycle(projectId, {
-      name,
-      description,
-      status,
-      version,
-      iteration,
-      ownerName,
-      startDate,
-      endDate,
-      folderId: folderId || null,
-      customFields: custom,
-    });
-    router.push(`/projects/${projectId}/cycles/${res.key ?? res.id}`);
+    setError(null);
+    try {
+      const res = await createCycle(projectId, {
+        name,
+        description,
+        status,
+        version,
+        iteration,
+        ownerName,
+        startDate,
+        endDate,
+        folderId: folderId || null,
+        customFields: custom,
+      });
+      router.push(`/projects/${projectId}/cycles/${res.key ?? res.id}`);
+    } catch {
+      setBusy(false);
+      setError("Something wrong, please try again later.");
+    }
   }
 
   return (
@@ -218,6 +226,7 @@ export function NewCycleModal({
             </div>
           </div>
 
+          {error && <p className="text-sm text-red-500">{error}</p>}
           <div className="flex justify-end gap-2 border-t border-line pt-3">
             <button
               type="button"

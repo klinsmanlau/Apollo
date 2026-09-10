@@ -298,6 +298,47 @@ export async function removeExecution(executionId: string) {
   await prisma.testExecution.delete({ where: { id: executionId } });
 }
 
+/** Bulk "Delete" — remove several executions from their cycle in one call. */
+export async function bulkRemoveExecutions(
+  executionIds: string[]
+): Promise<{ ok: true; removed: number } | { error: string }> {
+  if (executionIds.length === 0) return { ok: true, removed: 0 };
+  const rows = await prisma.testExecution.findMany({
+    where: { id: { in: executionIds } },
+    select: { id: true, run: { select: { projectId: true } } },
+  });
+  if (rows.length === 0) return { ok: true, removed: 0 };
+  const projectIds = new Set(rows.map((r) => r.run.projectId));
+  if (projectIds.size !== 1) return { error: "Forbidden" };
+  await requireProjectRole([...projectIds][0], "lead");
+  const res = await prisma.testExecution.deleteMany({
+    where: { id: { in: rows.map((r) => r.id) } },
+  });
+  return { ok: true, removed: res.count };
+}
+
+/** Bulk-assign several executions to a user (or unassign, with `null`). */
+export async function bulkAssignExecutions(
+  executionIds: string[],
+  assignedToId: string | null,
+  assignedToName: string | null
+): Promise<{ ok: true; updated: number } | { error: string }> {
+  if (executionIds.length === 0) return { ok: true, updated: 0 };
+  const rows = await prisma.testExecution.findMany({
+    where: { id: { in: executionIds } },
+    select: { id: true, run: { select: { projectId: true } } },
+  });
+  if (rows.length === 0) return { ok: true, updated: 0 };
+  const projectIds = new Set(rows.map((r) => r.run.projectId));
+  if (projectIds.size !== 1) return { error: "Forbidden" };
+  await requireProjectRole([...projectIds][0], "tester");
+  const res = await prisma.testExecution.updateMany({
+    where: { id: { in: rows.map((r) => r.id) } },
+    data: { assignedToId, assignedToName },
+  });
+  return { ok: true, updated: res.count };
+}
+
 /** True if any step's Actual Result HTML embeds an image (counts as evidence). */
 function stepResultsHaveImage(results: unknown): boolean {
   if (!Array.isArray(results)) return false;

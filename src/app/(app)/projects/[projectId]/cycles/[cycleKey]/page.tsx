@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth";
+import { suiteCaseCounts } from "@/lib/cases-query";
 import { CycleDetail, type CycleData } from "./cycle-detail";
 
 export default async function CycleRunPage({
@@ -11,7 +12,7 @@ export default async function CycleRunPage({
   const { projectId, cycleKey } = await params;
   const user = await requireUser();
 
-  const [cycle, folders, members] = await Promise.all([
+  const [cycle, folders, members, suites, suiteCounts] = await Promise.all([
     prisma.testRun.findFirst({
       where: {
         project: { id: projectId, members: { some: { userId: user.id } } },
@@ -23,7 +24,6 @@ export default async function CycleRunPage({
             case: { select: { id: true, key: true, title: true, priority: true } },
             executedBy: { select: { name: true, email: true } },
             assignedTo: { select: { id: true, name: true, email: true } },
-            _count: { select: { attachmentFiles: true } },
           },
           orderBy: { createdAt: "asc" },
         },
@@ -37,6 +37,12 @@ export default async function CycleRunPage({
       where: { projectId },
       select: { user: { select: { id: true, name: true, email: true } } },
     }),
+    prisma.testSuite.findMany({
+      where: { projectId },
+      select: { id: true, name: true, parentSuiteId: true, position: true },
+      orderBy: [{ position: "asc" }, { name: "asc" }],
+    }),
+    suiteCaseCounts(projectId),
   ]);
   if (!cycle) notFound();
 
@@ -78,6 +84,8 @@ export default async function CycleRunPage({
     customFields,
     folderOptions,
     users: members.map((m) => m.user),
+    suites,
+    suiteCounts,
     executions: cycle.executions.map((e) => ({
       id: e.id,
       status: e.status,
@@ -94,13 +102,17 @@ export default async function CycleRunPage({
       executedAt: e.executedAt?.toISOString() ?? null,
       assignedToId: e.assignedTo?.id ?? null,
       assignedToName: e.assignedTo?.name ?? e.assignedTo?.email ?? null,
-      attachmentCount: e._count.attachmentFiles,
     })),
   };
 
   return (
     <div className="animate-fade h-full">
-      <CycleDetail projectId={projectId} initial={data} />
+      <CycleDetail
+        projectId={projectId}
+        initial={data}
+        currentUserId={user.id}
+        currentUserName={user.name ?? user.email}
+      />
     </div>
   );
 }

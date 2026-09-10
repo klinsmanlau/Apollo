@@ -2,6 +2,8 @@ import { prisma } from "@/lib/prisma";
 
 // Matches a case key like "TS-T7060" → prefix "TS", number 7060.
 const KEY_RE = /^([A-Za-z][A-Za-z0-9]*)-T(\d+)$/;
+// Matches a cycle key like "TS-R96" → prefix "TS", number 96.
+const CYCLE_KEY_RE = /^([A-Za-z][A-Za-z0-9]*)-R(\d+)$/;
 
 export function parseKey(key: string): { prefix: string; num: number } | null {
   const m = KEY_RE.exec(key.trim());
@@ -117,16 +119,56 @@ export async function nextCaseKeys(projectId: string, count: number): Promise<st
   return keys;
 }
 
-/** Atomically allocate the next test-cycle key for a project (e.g. TS-R96). */
+/**
+ * Atomically allocate the next test-cycle key for a project (e.g. TS-R96).
+ * Self-heals if `cycleSeq` ever drifts behind the real max key (e.g. after a
+ * database restore/migration that didn't preserve the counter in lockstep
+ * with existing rows) by checking the allocated key against the table and
+ * bumping straight to the true max on a collision, then retrying.
+ */
 export async function nextCycleKey(projectId: string): Promise<string> {
   await ensureProjectKeying(projectId);
-  const p = await prisma.project.update({
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const p = await prisma.project.update({
+      where: { id: projectId },
+      data: { cycleSeq: { increment: 1 } },
+      select: { cycleSeq: true, keyPrefix: true, name: true },
+    });
+    const prefix = p.keyPrefix ?? deriveDefaultPrefix(p.name);
+    const key = `${prefix}-R${p.cycleSeq}`;
+    const exists = await prisma.testRun.findUnique({ where: { key }, select: { id: true } });
+    if (!exists) return key;
+    await bumpCycleSeqToMax(projectId);
+  }
+  throw new Error("Could not allocate a unique cycle key — please retry.");
+}
+
+/** Bump the cycle sequence past the highest existing key number. Never moves
+ *  the counter backward — only forward, to correct drift. */
+export async function bumpCycleSeqToMax(projectId: string) {
+  const project = await prisma.project.findUnique({
     where: { id: projectId },
-    data: { cycleSeq: { increment: 1 } },
-    select: { cycleSeq: true, keyPrefix: true, name: true },
+    select: { keyPrefix: true, cycleSeq: true },
   });
-  const prefix = p.keyPrefix ?? deriveDefaultPrefix(p.name);
-  return `${prefix}-R${p.cycleSeq}`;
+  if (!project?.keyPrefix) return;
+
+  const runs = await prisma.testRun.findMany({
+    where: { projectId },
+    select: { key: true },
+  });
+  let maxNum = project.cycleSeq;
+  for (const r of runs) {
+    const m = r.key ? CYCLE_KEY_RE.exec(r.key) : null;
+    if (m && m[1].toUpperCase() === project.keyPrefix.toUpperCase()) {
+      maxNum = Math.max(maxNum, Number(m[2]));
+    }
+  }
+  if (maxNum > project.cycleSeq) {
+    await prisma.project.update({
+      where: { id: projectId },
+      data: { cycleSeq: maxNum },
+    });
+  }
 }
 
 /** Bump the sequence past the highest existing key number (after imports). */

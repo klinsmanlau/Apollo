@@ -6,7 +6,7 @@ import type { Step } from "@/lib/validation";
 // Docs: https://support.smartbear.com/zephyr-scale-cloud/api-docs/
 const BASE = "https://api.zephyrscale.smartbear.com/v2";
 
-type ZephyrPage<T> = {
+export type ZephyrPage<T> = {
   values: T[];
   isLast: boolean;
   next?: string | null;
@@ -42,7 +42,7 @@ type ZephyrTestStep =
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function zGet<T>(path: string, token: string): Promise<T> {
+export async function zGet<T>(path: string, token: string): Promise<T> {
   const url = path.startsWith("http") ? path : `${BASE}${path}`;
   // Retry rate-limit (and transient 5xx) responses a few times with backoff —
   // required for the concurrent steps fetch below so a 429 doesn't silently
@@ -67,7 +67,7 @@ async function zGet<T>(path: string, token: string): Promise<T> {
 }
 
 /** Page through a Zephyr collection endpoint until isLast. */
-async function zList<T>(path: string, token: string): Promise<T[]> {
+export async function zList<T>(path: string, token: string): Promise<T[]> {
   const out: T[] = [];
   let startAt = 0;
   const maxResults = 100;
@@ -131,7 +131,7 @@ function mapSteps(steps: ZephyrTestStep[]): Step[] {
 }
 
 /** Zephyr rich-text fields are HTML; reduce to readable plain text. */
-function stripHtml(html: string): string {
+export function stripHtml(html: string): string {
   return html
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(p|div|li)>/gi, "\n")

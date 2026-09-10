@@ -17,7 +17,7 @@ const PRIORITY_STYLES: Record<Priority, string> = {
 
 // Shared sizing for all solid tag badges (priority + status).
 const BADGE_BASE =
-  "inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-bold uppercase leading-tight text-white";
+  "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold uppercase leading-tight text-white";
 
 export function PriorityBadge({ priority }: { priority: Priority }) {
   return <span className={`${BADGE_BASE} ${PRIORITY_STYLES[priority]}`}>{priority}</span>;

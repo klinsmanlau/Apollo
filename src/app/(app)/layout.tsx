@@ -30,6 +30,12 @@ export default async function AppLayout({
               >
                 Projects
               </Link>
+              <Link
+                href="/my-work"
+                className="rounded-md px-2.5 py-1.5 font-medium text-muted transition-colors hover:bg-surface-muted hover:text-fg"
+              >
+                My Work
+              </Link>
             </nav>
           </div>
           <div className="flex items-center gap-3">

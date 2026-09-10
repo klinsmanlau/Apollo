@@ -381,6 +381,7 @@ export function TestPlayer({
   data: PlayerData;
   currentUserId: string;
   currentUserName: string;
+  defaultJiraProjectKey?: string | null;
 }) {
   const [execs, setExecs] = useState<PlayerExec[]>(data.executions);
   const [idx, setIdx] = useState(0);

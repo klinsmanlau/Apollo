@@ -37,6 +37,7 @@ model User {
   executions     TestExecution[] @relation("ExecutedBy")
   attachments    Attachment[]    @relation("UploadedBy")
   assignedExecutions TestExecution[] @relation("AssignedTo")
+  linkedIssuesCreated LinkedIssue[]  @relation("LinkedIssueCreatedBy")
 
   @@index([email])
 }
@@ -289,6 +290,7 @@ model TestExecution {
   executedBy User?    @relation("ExecutedBy", fields: [executedById], references: [id], onDelete: SetNull)
   assignedTo User?    @relation("AssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
   attachmentFiles Attachment[]
+  linkedIssues    LinkedIssue[]
 
   // One execution row per (run, case).
   @@unique([runId, caseId])
@@ -297,6 +299,31 @@ model TestExecution {
   @@index([assignedToId, status])
   // Per-case execution history, newest first.
   @@index([caseId, executedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Linked issues (Jira tickets attached to an execution — Zephyr's "Issues"
+// panel). Multiple per execution; `defectRef` above stays as-is (DeviceCloud
+// automation writes its console URL there — a separate, unrelated use).
+// Phase A: manually-entered keys, no Jira API call. Phase B adds validation
+// against the real Jira REST API and an in-app "create issue" flow — this
+// model already has the shape that phase needs (one row per link, so a
+// per-issue cached title/status/url can be added later without a migration).
+// ---------------------------------------------------------------------------
+
+model LinkedIssue {
+  id          String   @id @default(cuid())
+  executionId String
+  // Jira issue key, e.g. "APP-1234". Stored uppercase.
+  issueKey    String
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  execution TestExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  createdBy User?         @relation("LinkedIssueCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([executionId, issueKey])
+  @@index([executionId])
 }
 
 // ---------------------------------------------------------------------------
@@ -314,7 +341,9 @@ model Attachment {
   fileName     String
   mimeType     String
   size         Int // bytes
-  data         Bytes
+  // Bytes live in Supabase Storage; this key is the object path in the
+  // "attachments" bucket. (Migrated off the old Postgres `data` column.)
+  storageKey   String
   uploadedById String?
   createdAt    DateTime @default(now())
 

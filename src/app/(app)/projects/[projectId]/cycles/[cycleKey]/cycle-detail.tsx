@@ -9,11 +9,14 @@ import { CUSTOM_FIELDS } from "@/lib/custom-fields";
 import {
   recordExecution,
   removeExecution,
+  bulkAssignExecutions,
+  bulkRemoveExecutions,
   autosaveCycle,
 } from "@/lib/actions/cycles";
 import { AddCasesModal } from "./add-cases-modal";
+import type { WSuite } from "../../project-workspace";
 import type { Priority, ExecutionStatus, CycleStatus } from "@prisma/client";
-import { ArrowLeft, ChevronDown, ChevronRight, Paperclip, Play, X } from "@/components/icons";
+import { ArrowLeft, ChevronDown, ChevronRight, Play, X } from "@/components/icons";
 
 type CaseUser = { id: string; name: string | null; email: string };
 
@@ -29,7 +32,6 @@ export type ExecRow = {
   executedAt: string | null;
   assignedToId: string | null;
   assignedToName: string | null;
-  attachmentCount: number;
 };
 
 export type CycleData = {
@@ -49,6 +51,8 @@ export type CycleData = {
   folderOptions: Opt[];
   users: CaseUser[];
   executions: ExecRow[];
+  suites: WSuite[];
+  suiteCounts: Record<string, number>;
 };
 
 const TABS = ["Details", "Test cases", "Traceability", "History"] as const;
@@ -157,12 +161,106 @@ function AssigneeCell({
   );
 }
 
+/** Bulk-assign dropdown ("Testers"). Collapsed to just Unassigned + the
+ *  current user until the tester types something, at which point it becomes
+ *  a live search across every project member. */
+function TestersDropdown({
+  disabled,
+  users,
+  currentUserId,
+  currentUserName,
+  onPick,
+}: {
+  disabled: boolean;
+  users: CaseUser[];
+  currentUserId: string;
+  currentUserName: string;
+  onPick: (id: string | null, name: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? users.filter((u) => (u.name ?? u.email).toLowerCase().includes(q))
+    : [];
+
+  function pick(id: string | null, name: string | null) {
+    onPick(id, name);
+    setOpen(false);
+    setQuery("");
+  }
+  function close() {
+    setOpen(false);
+    setQuery("");
+  }
+
+  return (
+    <div className="relative">
+      <button
+        disabled={disabled}
+        onClick={() => setOpen((o) => !o)}
+        className="btn btn-secondary"
+      >
+        Testers <ChevronDown size={12} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={close} />
+          <div className="absolute left-0 z-20 mt-1 w-56 overflow-hidden rounded-md border border-line bg-surface shadow-xl">
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search testers…"
+              className="w-full border-b border-line bg-transparent px-3 py-2 text-sm text-fg outline-none placeholder:text-subtle"
+            />
+            <div className="max-h-56 overflow-y-auto py-1">
+              {!q ? (
+                <>
+                  <button
+                    onClick={() => pick(null, null)}
+                    className="flex w-full items-center px-3 py-1.5 text-left text-sm text-subtle transition-colors hover:bg-surface-muted"
+                  >
+                    Unassigned
+                  </button>
+                  <button
+                    onClick={() => pick(currentUserId, currentUserName)}
+                    className="flex w-full items-center px-3 py-1.5 text-left text-sm text-fg transition-colors hover:bg-surface-muted"
+                  >
+                    {currentUserName}
+                  </button>
+                </>
+              ) : filtered.length === 0 ? (
+                <p className="px-3 py-1.5 text-xs text-subtle">No matches</p>
+              ) : (
+                filtered.map((u) => (
+                  <button
+                    key={u.id}
+                    onClick={() => pick(u.id, u.name ?? u.email)}
+                    className="flex w-full items-center px-3 py-1.5 text-left text-sm text-fg transition-colors hover:bg-surface-muted"
+                  >
+                    {u.name ?? u.email}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function CycleDetail({
   projectId,
   initial,
+  currentUserId,
+  currentUserName,
 }: {
   projectId: string;
   initial: CycleData;
+  currentUserId: string;
+  currentUserName: string;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("Details");
@@ -170,6 +268,7 @@ export function CycleDetail({
   const [execs, setExecs] = useState<ExecRow[]>(initial.executions);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [exportOpen, setExportOpen] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   async function exportResults(format: "xlsx" | "csv") {
     setExportOpen(false);
@@ -242,9 +341,42 @@ export function CycleDetail({
     recordExecution(id, { assignedToId, assignedToName });
   }
 
+  function toggleSelected(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+  function toggleSelectAll() {
+    setSelected((prev) =>
+      prev.size === execs.length ? new Set() : new Set(execs.map((e) => e.id))
+    );
+  }
+  function bulkAssign(assignedToId: string | null, assignedToName: string | null) {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    setExecs((prev) =>
+      prev.map((e) => (selected.has(e.id) ? { ...e, assignedToId, assignedToName } : e))
+    );
+    bulkAssignExecutions(ids, assignedToId, assignedToName);
+    setSelected(new Set());
+  }
+  function bulkDelete() {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    setExecs((prev) => prev.filter((e) => !selected.has(e.id)));
+    setSelected(new Set());
+    bulkRemoveExecutions(ids);
+  }
+
   const folderLabel =
     c.folderOptions.find((o) => o.value === (c.folderId ?? ""))?.label ??
     (c.folderPath ? "/" + c.folderPath.replace(/ \/ /g, "/") : "— Top level —");
+
+  // Case links from this table carry a "Go Back" trail — clicking a case,
+  // then "Go Back", returns here rather than to the case's own folder.
+  const caseReturnTo = encodeURIComponent(`/projects/${projectId}/cycles/${c.key ?? c.id}`);
 
   return (
     <div className="flex h-full flex-col">
@@ -453,13 +585,29 @@ export function CycleDetail({
 
         {tab === "Test cases" && (
           <div className="space-y-4">
-            <div className="flex flex-wrap items-center justify-end gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <AddCasesModal
                 projectId={projectId}
                 cycleId={c.id}
                 existingCaseIds={execs.map((e) => e.caseId)}
+                suites={c.suites}
+                suiteCounts={c.suiteCounts}
                 onAdded={() => router.refresh()}
               />
+              <TestersDropdown
+                disabled={selected.size === 0}
+                users={c.users}
+                currentUserId={currentUserId}
+                currentUserName={currentUserName}
+                onPick={bulkAssign}
+              />
+              <button
+                disabled={selected.size === 0}
+                onClick={bulkDelete}
+                className="btn btn-secondary text-red-600 hover:border-red-300 hover:bg-red-50 dark:hover:bg-red-500/10"
+              >
+                Delete{selected.size > 0 ? ` (${selected.size})` : ""}
+              </button>
             </div>
 
             {execs.length === 0 ? (
@@ -471,11 +619,17 @@ export function CycleDetail({
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-surface-muted text-[11px] uppercase tracking-wide text-subtle">
                     <tr>
+                      <th className="w-8 px-2 py-1.5 text-left">
+                        <input
+                          type="checkbox"
+                          checked={execs.length > 0 && selected.size === execs.length}
+                          onChange={toggleSelectAll}
+                        />
+                      </th>
                       <th className="w-8 px-2 py-1.5 text-left font-semibold">P</th>
                       <th className="px-3 py-1.5 text-left font-semibold">Key</th>
                       <th className="px-2 py-1.5 text-left font-semibold">Test case</th>
-                      <th className="px-2 py-1.5 text-left font-semibold">Notes</th>
-                      <th className="px-2 py-1.5 text-left font-semibold">Assignee</th>
+                      <th className="px-2 py-1.5 text-left font-semibold">Assigned to</th>
                       <th className="px-2 py-1.5 text-left font-semibold">Executed by</th>
                       <th className="w-8" />
                     </tr>
@@ -484,11 +638,18 @@ export function CycleDetail({
                     {execs.map((e) => (
                       <tr key={e.id} className="border-t border-line align-middle">
                         <td className="px-2 py-1.5">
+                          <input
+                            type="checkbox"
+                            checked={selected.has(e.id)}
+                            onChange={() => toggleSelected(e.id)}
+                          />
+                        </td>
+                        <td className="px-2 py-1.5">
                           <PriorityFlag priority={e.casePriority} />
                         </td>
                         <td className="whitespace-nowrap px-3 py-1.5">
                           <Link
-                            href={`/projects/${projectId}/cases/${e.caseKey ?? e.caseId}`}
+                            href={`/projects/${projectId}/cases/${e.caseKey ?? e.caseId}?returnTo=${caseReturnTo}`}
                             className="font-mono text-xs text-ring hover:underline"
                           >
                             {e.caseKey ?? "—"}
@@ -496,19 +657,11 @@ export function CycleDetail({
                         </td>
                         <td className="px-2 py-1.5">
                           <Link
-                            href={`/projects/${projectId}/cases/${e.caseKey ?? e.caseId}`}
+                            href={`/projects/${projectId}/cases/${e.caseKey ?? e.caseId}?returnTo=${caseReturnTo}`}
                             className="text-fg hover:text-ring hover:underline"
                           >
                             {e.caseTitle}
                           </Link>
-                        </td>
-                        <td className="px-2 py-1.5">
-                          <input
-                            defaultValue={e.notes ?? ""}
-                            onBlur={(ev) => recordExecution(e.id, { notes: ev.target.value })}
-                            placeholder="Add note…"
-                            className="w-full rounded-md border border-transparent bg-transparent px-2 py-0.5 text-sm transition-colors hover:bg-surface-muted focus:border-line focus:bg-surface focus:outline-none placeholder:text-subtle"
-                          />
                         </td>
                         <td className="px-2 py-1.5">
                           <AssigneeCell
@@ -520,14 +673,6 @@ export function CycleDetail({
                         </td>
                         <td className="whitespace-nowrap px-2 py-1 text-xs text-subtle">
                           {e.executedByName ?? "—"}
-                          {e.attachmentCount > 0 && (
-                            <span
-                              className="ml-2 text-muted"
-                              title={`${e.attachmentCount} attachment${e.attachmentCount === 1 ? "" : "s"} — open in Test Player`}
-                            >
-                              <Paperclip size={12} />{e.attachmentCount}
-                            </span>
-                          )}
                         </td>
                         <td className="px-2 py-1.5">
                           <button

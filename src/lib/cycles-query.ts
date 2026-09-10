@@ -156,11 +156,17 @@ export async function queryCyclePage(
   const cycles: CycleRow[] = runs.map((r) => {
     const s = stats.get(r.id) ?? zero();
     const progress = s.total ? Math.round((s.executed / s.total) * 100) : 0;
-    // Status derived from progress: every case executed → Done; any remaining
-    // (or nothing executed yet) → In Progress. An empty cycle (no cases) has
-    // nothing to run, so it stays Not executed.
+    // Status derived from progress: every case executed → Done; some (but not
+    // all) executed → In Progress. An empty cycle, or one where nothing has
+    // been executed yet (0%), stays Not executed — gated on the raw executed
+    // count rather than the rounded percentage so it can't flip to "in
+    // progress" purely from rounding.
     const status: CycleRow["status"] =
-      s.total === 0 ? "not_executed" : progress >= 100 ? "done" : "in_progress";
+      s.total === 0 || s.executed === 0
+        ? "not_executed"
+        : progress >= 100
+          ? "done"
+          : "in_progress";
     return {
       id: r.id,
       key: r.key,

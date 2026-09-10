@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth";
@@ -12,7 +13,7 @@ export default async function PlayerPage({
   const { projectId, cycleKey } = await params;
   const user = await requireUser();
 
-  const [cycle, members] = await Promise.all([
+  const [cycle, members, project] = await Promise.all([
     prisma.testRun.findFirst({
       where: {
         project: { id: projectId, members: { some: { userId: user.id } } },
@@ -40,6 +41,10 @@ export default async function PlayerPage({
               select: { id: true, fileName: true, mimeType: true, size: true },
               orderBy: { createdAt: "asc" },
             },
+            linkedIssues: {
+              select: { id: true, issueKey: true },
+              orderBy: { createdAt: "asc" },
+            },
           },
           orderBy: { createdAt: "asc" },
         },
@@ -48,6 +53,10 @@ export default async function PlayerPage({
     prisma.projectMember.findMany({
       where: { projectId },
       select: { user: { select: { id: true, name: true, email: true } } },
+    }),
+    prisma.project.findUnique({
+      where: { id: projectId },
+      select: { keyPrefix: true },
     }),
   ]);
   if (!cycle) notFound();
@@ -66,6 +75,7 @@ export default async function PlayerPage({
       status: e.status,
       notes: e.notes,
       defectRef: e.defectRef,
+      linkedIssues: e.linkedIssues,
       stepResults: (e.stepResults as unknown as { status: string }[]) ?? [],
       environment: e.environment,
       iteration: e.iteration,
@@ -90,13 +100,18 @@ export default async function PlayerPage({
 
   return (
     <div className="h-full">
-      <TestPlayer
-        projectId={projectId}
-        cycleKey={cycleKey}
-        data={data}
-        currentUserId={user.id}
-        currentUserName={user.name ?? user.email}
-      />
+      {/* TestPlayer reads the ?exec= deep link via useSearchParams, which
+          Next requires a Suspense boundary for. */}
+      <Suspense fallback={null}>
+        <TestPlayer
+          projectId={projectId}
+          cycleKey={cycleKey}
+          data={data}
+          currentUserId={user.id}
+          currentUserName={user.name ?? user.email}
+          defaultJiraProjectKey={project?.keyPrefix ?? null}
+        />
+      </Suspense>
     </div>
   );
 }

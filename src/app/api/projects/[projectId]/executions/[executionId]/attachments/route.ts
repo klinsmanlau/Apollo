@@ -1,5 +1,12 @@
 import { prisma } from "@/lib/prisma";
 import { requireProjectRole } from "@/lib/auth";
+import {
+  storageEnabled,
+  uploadToStorage,
+  deleteFromStorage,
+  attachmentStorageKey,
+} from "@/lib/storage";
+import { randomUUID } from "crypto";
 
 export const runtime = "nodejs";
 
@@ -76,20 +83,41 @@ export async function POST(
     }
   }
 
+  if (!storageEnabled()) {
+    // Bytes live only in Supabase Storage (the Postgres fallback column was
+    // dropped after migrating). Misconfiguration should fail loudly here.
+    return Response.json(
+      { error: "File storage is not configured" },
+      { status: 500 }
+    );
+  }
+
   const created: AttachmentMeta[] = [];
   for (const f of files) {
-    const a = await prisma.attachment.create({
-      data: {
-        executionId,
-        fileName: f.name || "attachment",
-        mimeType: f.type,
-        size: f.size,
-        data: Buffer.from(await f.arrayBuffer()),
-        uploadedById: user.id,
-      },
-      select: { id: true, fileName: true, mimeType: true, size: true },
-    });
-    created.push(a);
+    const bytes = Buffer.from(await f.arrayBuffer());
+    const fileName = f.name || "attachment";
+
+    // Upload bytes to the bucket first; the row references them by key.
+    const key = attachmentStorageKey(randomUUID(), fileName);
+    await uploadToStorage(key, bytes, f.type || "application/octet-stream");
+    try {
+      const a = await prisma.attachment.create({
+        data: {
+          executionId,
+          fileName,
+          mimeType: f.type,
+          size: f.size,
+          storageKey: key,
+          uploadedById: user.id,
+        },
+        select: { id: true, fileName: true, mimeType: true, size: true },
+      });
+      created.push(a);
+    } catch (e) {
+      // Row insert failed — don't leave an orphaned object in the bucket.
+      await deleteFromStorage(key).catch(() => {});
+      throw e;
+    }
   }
 
   return Response.json({ attachments: created });

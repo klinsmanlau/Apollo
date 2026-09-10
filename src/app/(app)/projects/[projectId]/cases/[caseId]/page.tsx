@@ -7,11 +7,17 @@ import { CaseDetail, type CaseData, type CaseExecRow } from "./case-detail";
 
 export default async function CasePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ projectId: string; caseId: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
 }) {
   const { projectId, caseId } = await params;
+  const { returnTo } = await searchParams;
   const user = await requireUser();
+  // Only ever a same-app relative path (e.g. back to the cycle that linked
+  // here) — reject anything else so this can't become an open redirect.
+  const safeReturnTo = returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : null;
 
   // Route segment carries the case key (e.g. TS-T7060); fall back to id.
   const [testCase, suites, members, executions] = await Promise.all([
@@ -119,6 +125,7 @@ export default async function CasePage({
         folderPath={parts.join(" / ")}
         users={users}
         executions={execRows}
+        returnTo={safeReturnTo}
       />
     </div>
   );

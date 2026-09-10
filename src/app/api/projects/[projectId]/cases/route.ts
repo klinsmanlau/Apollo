@@ -1,12 +1,14 @@
 import { auth } from "@clerk/nextjs/server";
 import {
   queryCasePage,
+  CASE_PAGE_SIZE,
   type SortField,
   type SortDir,
 } from "@/lib/cases-query";
 import { normalizeFilters, type CaseFilter } from "@/lib/case-filters";
 
 const SORT_FIELDS = new Set(["key", "title", "priority", "status"]);
+const ALLOWED_PAGE_SIZES = new Set([40, 60, 80, 100]);
 
 // On-demand, paginated case fetch for the workspace table. Membership is
 // enforced inside the query (via clerk id), and the client passes the folder's
@@ -32,6 +34,8 @@ export async function GET(
   const sort =
     sortParam && SORT_FIELDS.has(sortParam) ? (sortParam as SortField) : undefined;
   const dir: SortDir = url.searchParams.get("dir") === "desc" ? "desc" : "asc";
+  const pageSizeParam = Number(url.searchParams.get("pageSize"));
+  const pageSize = ALLOWED_PAGE_SIZES.has(pageSizeParam) ? pageSizeParam : CASE_PAGE_SIZE;
 
   // Filters arrive as a JSON array; normalize/validate against the schema.
   let filters: CaseFilter[] = [];
@@ -52,7 +56,8 @@ export async function GET(
     sort,
     dir,
     { memberClerkId: userId },
-    filters
+    filters,
+    pageSize
   );
   return Response.json({ cases, total });
 }

@@ -137,7 +137,8 @@ export async function queryCasePage(
   sort?: SortField,
   dir: SortDir = "asc",
   opts?: CaseWhereOpts,
-  filters?: CaseFilter[]
+  filters?: CaseFilter[],
+  pageSize: number = CASE_PAGE_SIZE
 ) {
   const where = await buildCaseWhere(projectId, scope, q, opts, filters);
   const [cases, total] = await Promise.all([
@@ -145,8 +146,8 @@ export async function queryCasePage(
       where,
       select: CASE_LIST_SELECT,
       orderBy: orderByFor(sort, dir),
-      skip: page * CASE_PAGE_SIZE,
-      take: CASE_PAGE_SIZE,
+      skip: page * pageSize,
+      take: pageSize,
     }),
     prisma.testCase.count({ where }),
   ]);
