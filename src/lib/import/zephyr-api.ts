@@ -15,7 +15,7 @@ export type ZephyrPage<T> = {
   total: number;
 };
 
-type ZephyrFolder = {
+export type ZephyrFolder = {
   id: number;
   name: string;
   parentId: number | null;
@@ -85,7 +85,7 @@ export async function zList<T>(path: string, token: string): Promise<T[]> {
 }
 
 /** Build id → full path (["E2E","Rewards","Bonus"]) from the folder tree. */
-function buildFolderPaths(folders: ZephyrFolder[]): Map<number, string[]> {
+export function buildFolderPaths(folders: ZephyrFolder[]): Map<number, string[]> {
   const byId = new Map<number, ZephyrFolder>(folders.map((f) => [f.id, f]));
   const cache = new Map<number, string[]>();
   const resolve = (id: number, seen = new Set<number>()): string[] => {

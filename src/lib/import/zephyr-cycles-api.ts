@@ -1,5 +1,5 @@
 import type { ExecutionStatus } from "@prisma/client";
-import { zGet, zList, stripHtml, type ZephyrPage } from "./zephyr-api";
+import { zGet, zList, stripHtml, buildFolderPaths, type ZephyrPage, type ZephyrFolder } from "./zephyr-api";
 
 // Raw Zephyr Cloud shapes (only the fields we use).
 type ZCycle = {
@@ -10,6 +10,7 @@ type ZCycle = {
   plannedStartDate?: string | null;
   plannedEndDate?: string | null;
   owner?: { accountId?: string } | null;
+  folder?: { id: number } | null;
 };
 
 type ZExecution = {
@@ -35,6 +36,7 @@ export type ZephyrCycle = {
   description: string | null;
   startDate: string | null;
   endDate: string | null;
+  folderPath: string[]; // reconstructed Zephyr folder path, e.g. ["Regression","Sprint 12"]
   executions: ZephyrExec[];
 };
 
@@ -89,12 +91,20 @@ export async function fetchZephyrCycles(
 ): Promise<ZephyrCycle[]> {
   const { token, projectKey } = opts;
 
-  // 1) Execution status id → name.
-  const statuses = await zList<{ id: number; name: string }>(
-    `/statuses?projectKey=${encodeURIComponent(projectKey)}&statusType=TEST_EXECUTION`,
-    token
-  );
+  // 1) Execution status id → name, and the TEST_CYCLE folder tree → id→path
+  //    (so imported cycles land under their real Zephyr folder hierarchy).
+  const [statuses, folders] = await Promise.all([
+    zList<{ id: number; name: string }>(
+      `/statuses?projectKey=${encodeURIComponent(projectKey)}&statusType=TEST_EXECUTION`,
+      token
+    ),
+    zList<ZephyrFolder>(
+      `/folders?projectKey=${encodeURIComponent(projectKey)}&folderType=TEST_CYCLE`,
+      token
+    ),
+  ]);
   const statusName = new Map(statuses.map((s) => [s.id, s.name]));
+  const folderPaths = buildFolderPaths(folders);
 
   // 2) All cycles.
   const cycles = await zList<ZCycle>(
@@ -136,6 +146,7 @@ export async function fetchZephyrCycles(
         description: c.description ? stripHtml(c.description) || null : null,
         startDate: c.plannedStartDate ?? null,
         endDate: c.plannedEndDate ?? null,
+        folderPath: c.folder?.id != null ? folderPaths.get(c.folder.id) ?? [] : [],
         executions,
       };
       done++;

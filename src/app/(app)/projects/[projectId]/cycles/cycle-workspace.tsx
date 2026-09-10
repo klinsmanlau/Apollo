@@ -1,14 +1,14 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { CycleRow } from "@/lib/cycles-query";
-import { cloneCycles, deleteCycles, addCycleFolder, removeCycleFolder } from "@/lib/actions/cycles";
+import { cloneCycles, deleteCycles, addCycleFolder, moveCycle, moveCycleFolder, renameCycleFolder, removeCycleFolder } from "@/lib/actions/cycles";
 import { NewCycleModal, type CycleUser } from "./new-cycle-modal";
 import { RefreshButton } from "@/components/refresh-button";
 import { useConfirm } from "@/components/confirm-dialog";
-import { ArrowLeft, ChevronDown, ChevronRight, ChevronUp, Play, X } from "@/components/icons";
+import { ArrowLeft, ChevronDown, ChevronRight, ChevronUp, Play } from "@/components/icons";
 
 export type WFolder = { id: string; name: string; parentFolderId: string | null };
 
@@ -88,7 +88,12 @@ export function CycleWorkspace({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(0);
-  const [creating, setCreating] = useState(false);
+  // Folder create target: undefined = closed, null = new root folder, string = new subfolder under that folder id.
+  const [createParent, setCreateParent] = useState<string | null | undefined>(undefined);
+  // Drag-and-drop: current drop target for highlight (folder id or "root").
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [sortField, setSortField] = useState<SortField | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -208,6 +213,49 @@ export function CycleWorkspace({
     router.refresh();
   }
 
+  // Drop the currently-dragged cycle(s) or folder into a target folder
+  // (targetId = null means the top level). Reparent-only; the server actions
+  // validate the move (and reject folder-into-own-subtree).
+  function applyDrop(
+    e: { preventDefault: () => void; dataTransfer: DataTransfer },
+    targetId: string | null
+  ) {
+    e.preventDefault();
+    setDropTarget(null);
+    let d: { kind: "cycle" | "folder"; id: string } | null = null;
+    try {
+      d = JSON.parse(e.dataTransfer.getData("application/json"));
+    } catch {}
+    if (!d) return;
+    if (d.kind === "cycle") {
+      // If the dragged cycle is part of a multi-selection, move them all.
+      const ids = selected.has(d.id) && selected.size > 1 ? [...selected] : [d.id];
+      run(async () => {
+        await Promise.all(ids.map((id) => moveCycle(projectId, id, targetId)));
+        setSelected(new Set());
+      });
+    } else {
+      if (d.id === targetId) return; // dropped onto itself — no-op
+      run(() => moveCycleFolder(projectId, d.id, targetId));
+    }
+  }
+
+  async function copy(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {}
+    setOpenMenu(null);
+  }
+  // Expand or collapse a folder and all of its descendants.
+  function expandSubtree(id: string, open: boolean) {
+    const ids = [...(subtreeOf.get(id) ?? [id])];
+    setExpanded((p) => {
+      const n = new Set(p);
+      for (const x of ids) open ? n.add(x) : n.delete(x);
+      return n;
+    });
+  }
+
   const selectedIds = [...selected];
   const roots = childrenOf.get(null) ?? [];
   const scopeName = selectedFolder
@@ -226,11 +274,49 @@ export function CycleWorkspace({
     if (!match) return null;
     return (
       <li>
+        {renaming === folder.id ? (
+          <div style={{ paddingLeft: `${depth * 14 + 6}px` }}>
+            <FolderCreate
+              initial={folder.name}
+              onSubmit={(name) =>
+                run(async () => {
+                  await renameCycleFolder(projectId, folder.id, name);
+                  setRenaming(null);
+                })
+              }
+              onDone={() => setRenaming(null)}
+            />
+          </div>
+        ) : (
         <div
           onClick={() => selectFolder(folder.id)}
+          draggable={canEdit}
+          onDragStart={(e) => {
+            e.stopPropagation();
+            e.dataTransfer.setData(
+              "application/json",
+              JSON.stringify({ kind: "folder", id: folder.id })
+            );
+            e.dataTransfer.effectAllowed = "move";
+          }}
+          onDragEnd={() => setDropTarget(null)}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (dropTarget !== folder.id) setDropTarget(folder.id);
+          }}
+          onDragLeave={() => setDropTarget((t) => (t === folder.id ? null : t))}
+          onDrop={(e) => {
+            e.stopPropagation();
+            applyDrop(e, folder.id);
+          }}
           style={{ paddingLeft: `${depth * 14 + 6}px` }}
-          className={`group flex cursor-pointer items-center gap-1 rounded-md py-1.5 pr-1 text-sm transition-colors ${
-            isSelected ? "bg-primary/10 text-fg" : "text-muted hover:bg-surface-muted hover:text-fg"
+          className={`group relative flex cursor-pointer items-center gap-1 rounded-md py-1.5 pr-1 text-sm transition-colors ${
+            dropTarget === folder.id
+              ? "bg-primary/10 text-fg ring-1 ring-ring"
+              : isSelected
+              ? "bg-primary/10 text-fg"
+              : "text-muted hover:bg-surface-muted hover:text-fg"
           }`}
         >
           {kids.length > 0 ? (
@@ -254,10 +340,103 @@ export function CycleWorkspace({
           <span className="ml-auto shrink-0 text-xs text-subtle group-hover:hidden">
             {countFor(folder.id)}
           </span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpenMenu(openMenu === folder.id ? null : folder.id);
+            }}
+            className={`ml-auto hidden h-6 w-6 shrink-0 items-center justify-center rounded text-subtle hover:bg-surface hover:text-fg group-hover:flex ${
+              openMenu === folder.id ? "!flex bg-surface text-fg" : ""
+            }`}
+            aria-label="Folder options"
+          >
+            ⋯
+          </button>
+          {openMenu === folder.id && <FolderMenu folder={folder} depth={depth} />}
+        </div>
+        )}
+        {(createParent === folder.id || (open && kids.length > 0)) && (
+          <ul>
+            {open &&
+              kids.map((k) => (
+                <FolderNode key={k.id} folder={k} depth={depth + 1} />
+              ))}
+            {createParent === folder.id && (
+              <li style={{ paddingLeft: `${(depth + 1) * 14 + 6}px` }}>
+                <FolderCreate
+                  onSubmit={(name) => run(() => addCycleFolder(projectId, name, folder.id))}
+                  onDone={() => setCreateParent(undefined)}
+                />
+              </li>
+            )}
+          </ul>
+        )}
+      </li>
+    );
+  }
+
+  function FolderMenu({ folder }: { folder: WFolder; depth: number }) {
+    const hasKids = (subtreeOf.get(folder.id)?.size ?? 1) > 1;
+    const Item = ({
+      onClick,
+      children,
+      disabled,
+    }: {
+      onClick?: () => void;
+      children: ReactNode;
+      disabled?: boolean;
+    }) => (
+      <button
+        disabled={disabled}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick?.();
+        }}
+        className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-muted disabled:opacity-40 disabled:hover:bg-transparent"
+      >
+        {children}
+      </button>
+    );
+    const Divider = () => <div className="my-1 border-t border-line" />;
+    return (
+      <>
+        {/* click-away backdrop */}
+        <div
+          className="fixed inset-0 z-20"
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpenMenu(null);
+          }}
+        />
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute right-1 top-8 z-30 w-52 overflow-hidden rounded-lg border border-line bg-surface py-1 shadow-xl"
+        >
+          {canEdit && (
+            <>
+              <Item
+                onClick={() => {
+                  setExpanded((p) => new Set(p).add(folder.id));
+                  setCreateParent(folder.id);
+                  setOpenMenu(null);
+                }}
+              >
+                Add subfolder
+              </Item>
+              <Item
+                onClick={() => {
+                  setRenaming(folder.id);
+                  setOpenMenu(null);
+                }}
+              >
+                Rename
+              </Item>
+            </>
+          )}
           {canDelete && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
+            <Item
+              onClick={() => {
+                setOpenMenu(null);
                 confirm({
                   title: "Delete folder",
                   body: (
@@ -271,21 +450,45 @@ export function CycleWorkspace({
                   onConfirm: () => run(() => removeCycleFolder(projectId, folder.id)),
                 });
               }}
-              className="ml-auto hidden text-xs text-subtle hover:text-red-500 group-hover:inline"
-              title="Delete folder"
             >
-              <X size={13} />
-            </button>
+              Delete
+            </Item>
           )}
+          {(canEdit || canDelete) && <Divider />}
+          <Item
+            disabled={!hasKids}
+            onClick={() => {
+              expandSubtree(folder.id, true);
+              setOpenMenu(null);
+            }}
+          >
+            Expand all
+          </Item>
+          <Item
+            disabled={!hasKids}
+            onClick={() => {
+              expandSubtree(folder.id, false);
+              setOpenMenu(null);
+            }}
+          >
+            Collapse all
+          </Item>
+          <Divider />
+          <Item onClick={() => copy(folder.id)}>
+            <span className="text-muted">ID</span>
+            <span className="truncate font-mono text-xs text-subtle">
+              {folder.id.slice(0, 8)}…
+            </span>
+          </Item>
+          <Item
+            onClick={() =>
+              copy(`${window.location.origin}/projects/${projectId}/cycles?folder=${folder.id}`)
+            }
+          >
+            Copy folder link
+          </Item>
         </div>
-        {open && kids.length > 0 && (
-          <ul>
-            {kids.map((k) => (
-              <FolderNode key={k.id} folder={k} depth={depth + 1} />
-            ))}
-          </ul>
-        )}
-      </li>
+      </>
     );
   }
 
@@ -296,7 +499,7 @@ export function CycleWorkspace({
         <div className="mb-2 flex items-center gap-2">
           {canEdit && (
             <button
-              onClick={() => setCreating(true)}
+              onClick={() => setCreateParent(null)}
               className="btn btn-sm btn-primary h-8 shrink-0 px-3"
             >
               + New Folder
@@ -312,8 +515,20 @@ export function CycleWorkspace({
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div
             onClick={() => selectFolder(null)}
+            onDragOver={(e) => {
+              e.preventDefault();
+              if (dropTarget !== "root") setDropTarget("root");
+            }}
+            onDragLeave={() => setDropTarget((t) => (t === "root" ? null : t))}
+            onDrop={(e) => {
+              applyDrop(e, null);
+            }}
             className={`flex cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-sm font-semibold transition-colors ${
-              selectedFolder === null ? "bg-primary/10 text-fg" : "text-fg hover:bg-surface-muted"
+              dropTarget === "root"
+                ? "bg-primary/10 text-fg ring-1 ring-ring"
+                : selectedFolder === null
+                ? "bg-primary/10 text-fg"
+                : "text-fg hover:bg-surface-muted"
             }`}
           >
             <span>All test cycles</span>
@@ -324,10 +539,10 @@ export function CycleWorkspace({
               <FolderNode key={f.id} folder={f} depth={0} />
             ))}
           </ul>
-          {creating && (
+          {createParent === null && (
             <FolderCreate
-              onSubmit={(name) => run(() => addCycleFolder(projectId, name, selectedFolder))}
-              onDone={() => setCreating(false)}
+              onSubmit={(name) => run(() => addCycleFolder(projectId, name, null))}
+              onDone={() => setCreateParent(undefined)}
             />
           )}
         </div>
@@ -449,9 +664,18 @@ export function CycleWorkspace({
                     {rows.map((r) => (
                       <tr
                         key={r.id}
+                        draggable={canEdit}
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData(
+                            "application/json",
+                            JSON.stringify({ kind: "cycle", id: r.id })
+                          );
+                          e.dataTransfer.effectAllowed = "move";
+                        }}
+                        onDragEnd={() => setDropTarget(null)}
                         className={`border-t border-line transition-colors hover:bg-surface-muted ${
-                          selected.has(r.id) ? "bg-primary/5" : ""
-                        }`}
+                          canEdit ? "cursor-grab" : ""
+                        } ${selected.has(r.id) ? "bg-primary/5" : ""}`}
                       >
                         <td className="px-3 py-2">
                           <input
@@ -552,11 +776,13 @@ export function CycleWorkspace({
 function FolderCreate({
   onSubmit,
   onDone,
+  initial = "",
 }: {
   onSubmit: (name: string) => void;
   onDone: () => void;
+  initial?: string;
 }) {
-  const [v, setV] = useState("");
+  const [v, setV] = useState(initial);
   return (
     <input
       autoFocus

@@ -1,10 +1,12 @@
 # Apollo — Internal Test Case Management
 
-A lightweight Zephyr replacement: author test cases, organize them into nested
-suites, and (in later phases) execute runs and report. This is the **Phase 1
-scaffold** — authentication, projects, suites, and full test-case authoring
-(CRUD). Runs, executions, dashboard, and CSV import/export are modeled in the
-schema and come next.
+A self-hosted **Zephyr Scale replacement**: author test cases in nested suites,
+group them into test **cycles**, execute them step-by-step in a **Test Player**,
+and record pass/fail results with evidence. Cases round-trip with Zephyr via
+`.xlsx` import/export, and automated results (Maestro / DeviceCloud) are ingested
+via webhook. Auth, projects, suites, case authoring, cycles, executions, the
+Test Player, per-project roles, My Work, and Jira issue linking are all
+implemented.
 
 ## Stack
 
@@ -142,6 +144,43 @@ Apollo, which turns the run into a **test cycle** automatically.
   case by the key in the flow name (e.g. `TS-T7060 …`); unmatched flows are
   auto-created under an **Automated** suite. Idempotent on `upload_id`.
 
+## Jira issue linking
+
+In the Test Player, testers can link Jira issues to an execution and — when Jira
+is configured — validate keys and create new issues in-app. Set `JIRA_BASE_URL`,
+`JIRA_EMAIL`, and `JIRA_API_TOKEN` to enable live validation/creation; leave them
+blank for **format-only** mode (no API calls). A companion **Jira Forge panel**
+(`jira-panel-app/`, deployed separately with `forge deploy`) surfaces an issue's
+linked Apollo executions inside Jira; it calls `/api/jira-panel/executions`,
+authenticated with `JIRA_PANEL_SECRET`, and uses `NEXT_PUBLIC_APP_URL` to build
+back-links.
+
+## Attachment storage
+
+Execution attachments (screenshots/logs) are stored **in Postgres**
+(`Attachment.data`) by default. To offload them to **Supabase Storage** instead,
+set `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_STORAGE_BUCKET` (a private bucket);
+`src/lib/storage.ts` handles read/write with a Postgres fallback.
+
+## Deployment
+
+Apollo is a Next.js **server** app (Server Actions, API routes, Prisma), so it
+needs a Node host + Postgres and **cannot** run on static hosting (GitHub Pages,
+S3). It deploys cleanly to **Vercel** from this repo:
+
+1. Import the repo in Vercel (Framework auto-detects Next.js; build is
+   `prisma generate && next build`).
+2. Set the environment variables from `.env.example` in the Vercel project.
+   All `NEXT_PUBLIC_*` values are **build-time** — changing one requires a
+   redeploy. Mark `NEXT_PUBLIC_*` as non-secret ("Config") since they ship to
+   the browser.
+3. Point `DATABASE_URL` / `DIRECT_URL` at your Supabase database and ensure the
+   schema is applied (`npm run db:push`).
+4. **Restrict Clerk sign-ups** to your org's email domain before sharing the URL.
+
+The share URL is Vercel's stable **domain** alias (e.g. `*.vercel.app`), not the
+per-build deployment URL.
+
 ## Roadmap (from the spec)
 
 - **Phase 1 (this scaffold):** auth, projects, suites, case authoring, Zephyr .xlsx import ✅
@@ -154,6 +193,8 @@ Apollo, which turns the run into a **test cycle** automatically.
     keyed by user), a **My Work** tab (open executions assigned to you,
     grouped by cycle), per-case **execution history** (Execution tab on the
     case detail) and a **Last result** column in the case library
-- **Phase 2:** Jira / GitHub issue linking, CI result webhook, Slack notifications
-- **Phase 3:** trend charts, saved views, attachments, flaky-test flag
+- **Phase 2:** Jira issue linking ✅ (+ Jira Forge panel), DeviceCloud CI result
+  webhook ✅, Zephyr **cycle** sync ✅, Supabase Storage attachments ✅; GitHub
+  issue linking and Slack notifications next
+- **Phase 3:** trend charts, saved views, flaky-test flag
 ```

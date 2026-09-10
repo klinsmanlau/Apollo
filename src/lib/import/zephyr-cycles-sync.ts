@@ -13,19 +13,6 @@ export type ZephyrCycleSyncSummary = {
   cyclesTotal: number;
 };
 
-async function ensureImportFolder(projectId: string): Promise<string> {
-  const existing = await prisma.cycleFolder.findFirst({
-    where: { projectId, parentFolderId: null, name: IMPORT_FOLDER },
-    select: { id: true },
-  });
-  if (existing) return existing.id;
-  const created = await prisma.cycleFolder.create({
-    data: { projectId, name: IMPORT_FOLDER },
-    select: { id: true },
-  });
-  return created.id;
-}
-
 // 100% executed → done; some executed → in_progress; none → not_executed.
 function deriveCycleStatus(execs: { status: ExecutionStatus }[]): "not_executed" | "in_progress" | "done" {
   if (execs.length === 0) return "not_executed";
@@ -54,7 +41,48 @@ export async function syncCyclesFromZephyr(opts: {
     onProgress: (d, t) => opts.onProgress?.("fetch", d, t),
   });
 
-  const folderId = await ensureImportFolder(opts.projectId);
+  // Rebuild the Zephyr cycle-folder hierarchy in Apollo (same approach as the
+  // case import's suites). Seed the path cache from the existing tree in ONE
+  // query; only genuinely new folders hit the DB afterwards.
+  const folderCache = new Map<string, string>(); // "<projectId>/A/B" -> folderId
+  {
+    const all = await prisma.cycleFolder.findMany({
+      where: { projectId: opts.projectId },
+      select: { id: true, name: true, parentFolderId: true },
+    });
+    const byId = new Map(all.map((f) => [f.id, f]));
+    for (const f of all) {
+      const parts: string[] = [];
+      let cur: (typeof all)[number] | undefined = f;
+      while (cur) {
+        parts.unshift(cur.name);
+        cur = cur.parentFolderId ? byId.get(cur.parentFolderId) : undefined;
+      }
+      folderCache.set(opts.projectId + "/" + parts.join("/"), f.id);
+    }
+  }
+
+  // Cycles with no Zephyr folder fall back to a top-level "Zephyr (imported)"
+  // folder (mirrors the case import's "Imported" fallback).
+  async function ensureCycleFolderPath(path: string[]): Promise<string> {
+    const segs = path.length > 0 ? path : [IMPORT_FOLDER];
+    let parentId: string | null = null;
+    let key = opts.projectId;
+    for (const name of segs) {
+      key += "/" + name;
+      let id: string | undefined = folderCache.get(key);
+      if (!id) {
+        const created: { id: string } = await prisma.cycleFolder.create({
+          data: { projectId: opts.projectId, parentFolderId: parentId, name },
+          select: { id: true },
+        });
+        id = created.id;
+        folderCache.set(key, id);
+      }
+      parentId = id;
+    }
+    return parentId as string;
+  }
 
   // Preload case sourceKey → id for the whole project (one pass, chunked).
   const idByKey = new Map<string, string>();
@@ -105,6 +133,7 @@ export async function syncCyclesFromZephyr(opts: {
     }
     const execs = [...execByCase.values()];
     const cycleStatus = deriveCycleStatus(execs);
+    const folderId = await ensureCycleFolderPath(zc.folderPath);
 
     // Upsert the cycle (TestRun) by externalRunId.
     const existing = await prisma.testRun.findUnique({
