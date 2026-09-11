@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { autosaveCase, deleteCase } from "@/lib/actions/cases";
 import { Modal } from "@/components/modal";
 import { SelectField, opts, type Opt } from "@/components/select-field";
@@ -187,6 +188,16 @@ export function CaseDetail({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stepsRef = useRef<HTMLDivElement>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const router = useRouter();
+  // Return to the exact screen the user came from (its tab + scroll are restored
+  // by a real history back). Flush pending autosaves first so no edits are lost.
+  // Falls back to an explicit returnTo, then the project, when there's no history.
+  async function goBack() {
+    await flush();
+    if (typeof window !== "undefined" && window.history.length > 1) router.back();
+    else if (returnTo) router.push(returnTo);
+    else router.push(`/projects/${projectId}`);
+  }
 
   const userOpts: Opt[] = users.map((u) => ({
     value: u.name ?? u.email,
@@ -274,12 +285,12 @@ export function CaseDetail({
       <div className="shrink-0">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <Link
-              href={`/projects/${projectId}`}
+            <button
+              onClick={goBack}
               className="inline-flex items-center gap-1.5 text-sm text-subtle transition-colors hover:text-fg"
             >
               <ArrowLeft size={14} /> {folderPath || "Back"}
-            </Link>
+            </button>
             {c.key && (
               <p className="mt-1 font-mono text-xs text-subtle">{c.key}</p>
             )}
@@ -291,14 +302,12 @@ export function CaseDetail({
             <span className="text-xs text-subtle">
               {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved ✓" : ""}
             </span>
-            {returnTo && (
-              <Link
-                href={returnTo}
-                className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface px-3 py-1.5 text-sm font-medium text-fg transition-colors hover:bg-surface-muted"
-              >
-                <ArrowLeft size={14} /> Go Back
-              </Link>
-            )}
+            <button
+              onClick={goBack}
+              className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface px-3 py-1.5 text-sm font-medium text-fg transition-colors hover:bg-surface-muted"
+            >
+              <ArrowLeft size={14} /> Back
+            </button>
             <button
               onClick={() => setConfirmDelete(true)}
               className="rounded-md border border-red-200 bg-surface px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-500/10"
