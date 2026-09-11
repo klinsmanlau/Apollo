@@ -1,4 +1,4 @@
-# Hourly Zephyr Scale -> Apollo mirror (migration-period job).
+# Daily Zephyr Scale -> Apollo mirror (migration-period job).
 #
 # While the team still authors in Zephyr (until year-end), this keeps Apollo's
 # test cases + cycles up to date. Both sync scripts are idempotent, so re-runs
@@ -21,7 +21,7 @@ name: Zephyr -> Apollo sync
 
 on:
   schedule:
-    - cron: "0 * * * *" # top of every hour (UTC)
+    - cron: "0 18 * * *" # daily at 18:00 UTC (~2 AM Malaysia, UTC+8)
   workflow_dispatch: {} # allow manual runs from the Actions tab
 
 # Never let two syncs overlap (a run may take longer than an hour on a big project).
@@ -32,7 +32,8 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # ~11k Zephyr cases: fetch ~16 min + cross-region persist. Give it headroom.
+    timeout-minutes: 60
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DIRECT_URL: ${{ secrets.DIRECT_URL }}
