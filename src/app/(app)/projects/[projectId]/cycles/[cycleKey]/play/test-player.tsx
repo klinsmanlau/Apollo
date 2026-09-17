@@ -757,8 +757,20 @@ export function TestPlayer({
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <h2 className="text-lg font-semibold text-fg">
-                    <span className="font-mono text-sm text-ring">{cur.caseKey}</span>{" "}
-                    {cur.caseTitle}
+                    <Link
+                      href={`/projects/${projectId}/cases/${cur.caseKey ?? cur.caseId}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Open test case details in a new tab"
+                      className="hover:underline"
+                    >
+                      {cur.caseKey && (
+                        <span className="font-mono text-sm text-ring">
+                          {cur.caseKey}
+                        </span>
+                      )}{" "}
+                      {cur.caseTitle}
+                    </Link>
                   </h2>
                   <p className="mt-0.5 text-xs text-subtle">
                     Est. {fmtEst(cur.caseEstimatedTime)} · executed by{" "}
