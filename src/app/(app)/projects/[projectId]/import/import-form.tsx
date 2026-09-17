@@ -27,12 +27,12 @@ export function ImportForm({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="mb-1 block text-sm font-medium text-fg">
-              Zephyr Scale export (.xlsx)
+              Zephyr Scale export (.xlsx or .csv)
             </label>
             <input
               type="file"
               name="file"
-              accept=".xlsx"
+              accept=".xlsx,.csv"
               required
               className="block w-full text-sm text-muted file:mr-3 file:rounded-md file:border-0 file:bg-primary file:px-4 file:py-2 file:text-sm file:font-medium file:text-primary-fg hover:file:opacity-90"
             />

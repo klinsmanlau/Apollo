@@ -21,8 +21,13 @@ export async function POST(
   if (!(file instanceof File) || file.size === 0) {
     return Response.json({ error: "Please choose a file to import" }, { status: 400 });
   }
-  if (!file.name.toLowerCase().endsWith(".xlsx")) {
-    return Response.json({ error: "Only .xlsx files are supported" }, { status: 400 });
+  const name = file.name.toLowerCase();
+  const isCsv = name.endsWith(".csv");
+  if (!name.endsWith(".xlsx") && !isCsv) {
+    return Response.json(
+      { error: "Only .xlsx or .csv files are supported" },
+      { status: 400 }
+    );
   }
   const buffer = Buffer.from(await file.arrayBuffer());
 
@@ -37,6 +42,7 @@ export async function POST(
           projectId,
           userId: user.id,
           buffer,
+          csv: isCsv,
           onStart: (total) => send({ type: "start", total }),
           onProgress: (done, total) => {
             // Throttle to ~100 updates for large imports.
@@ -55,7 +61,7 @@ export async function POST(
       } catch {
         send({
           type: "error",
-          error: "Could not import — is it a valid Zephyr .xlsx?",
+          error: "Could not import — is it a valid Zephyr .xlsx or .csv?",
         });
       } finally {
         controller.close();

@@ -36,7 +36,7 @@ export function ImportModal({ projectId }: { projectId: string }) {
     <>
       <button onClick={() => setOpen(true)} className="btn btn-secondary">
         <Upload size={15} />
-        Import from Excel
+        Import
       </button>
 
       <ConfirmDialog

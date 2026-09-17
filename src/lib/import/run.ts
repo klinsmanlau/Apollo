@@ -222,10 +222,11 @@ export async function importCases(opts: {
   projectId: string;
   userId: string;
   buffer: ArrayBuffer | Buffer;
+  csv?: boolean; // parse as CSV instead of .xlsx
   onStart?: (total: number) => void;
   onProgress?: (done: number, total: number) => void;
 }): Promise<ImportSummary> {
-  const parsed = await parseZephyrWorkbook(opts.buffer);
+  const parsed = await parseZephyrWorkbook(opts.buffer, { csv: opts.csv });
   const summary = await persistCases({
     projectId: opts.projectId,
     userId: opts.userId,

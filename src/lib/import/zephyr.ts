@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { Readable } from "node:stream";
 import type { Step } from "@/lib/validation";
 
 export type ParsedCase = {
@@ -108,11 +109,21 @@ function splitList(text: string): string[] {
 }
 
 export async function parseZephyrWorkbook(
-  data: ArrayBuffer | Buffer
+  data: ArrayBuffer | Buffer,
+  opts: { csv?: boolean } = {}
 ): Promise<ParseResult> {
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(data as ArrayBuffer);
-  const ws = wb.worksheets[0];
+  let ws: ExcelJS.Worksheet | undefined;
+  if (opts.csv) {
+    // Zephyr Scale also exports CSV. ExcelJS reads it via fast-csv, which
+    // handles quoted, multi-line step cells — so the header/row mapping below
+    // is identical to the xlsx path.
+    const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+    ws = await wb.csv.read(Readable.from(buf));
+  } else {
+    await wb.xlsx.load(data as ArrayBuffer);
+    ws = wb.worksheets[0];
+  }
   if (!ws) return { cases: [], skipped: 0, unmappedHeaders: [] };
 
   // Build header -> column index (1-based) from the first row.
