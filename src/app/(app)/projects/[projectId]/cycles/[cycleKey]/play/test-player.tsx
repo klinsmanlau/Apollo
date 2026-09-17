@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { compressImage } from "@/lib/compress-image";
 import { PriorityBadge } from "@/components/ui";
 import { SelectField, type Opt } from "@/components/select-field";
 import { recordExecution } from "@/lib/actions/cycles";
@@ -108,8 +109,11 @@ function AttachmentsSection({
     setError(null);
     setBusy(true);
     try {
+      // Shrink screenshots client-side so they fit the size cap; videos and
+      // other files pass through unchanged.
+      const prepared = await Promise.all(files.map((f) => compressImage(f)));
       const form = new FormData();
-      for (const f of files) form.append("files", f);
+      for (const f of prepared) form.append("files", f);
       const res = await fetch(
         `/api/projects/${projectId}/executions/${executionId}/attachments`,
         { method: "POST", body: form }
@@ -214,7 +218,7 @@ function AttachmentsSection({
       >
         {busy
           ? "Uploading…"
-          : "Drop files, paste a screenshot, or click to browse (max 5 MB)"}
+          : "Drop files, paste a screenshot, or click to browse (images auto-compressed · 5 MB max)"}
       </div>
       {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
     </div>
