@@ -66,6 +66,50 @@ export async function uploadToStorage(
   return key;
 }
 
+/**
+ * A single-use signed URL the browser can upload one object to, without our
+ * service-role key ever leaving the server. This is how large files (videos)
+ * reach Supabase directly, bypassing the ~4.5 MB request-body limit on our
+ * own serverless functions. The URL is bound to `key` and expires quickly.
+ */
+export async function signedUploadUrl(
+  key: string
+): Promise<{ url: string; token: string } | null> {
+  const client = storageClient();
+  if (!client) return null;
+  const { data, error } = await client.storage
+    .from(ATTACHMENTS_BUCKET)
+    .createSignedUploadUrl(key);
+  if (error || !data) return null;
+  return { url: data.signedUrl, token: data.token };
+}
+
+/**
+ * Read a stored object's authoritative size (and content-type), or null if it
+ * isn't there. Used to verify a direct upload actually landed and to record its
+ * real size — never trust a size the client claims.
+ */
+export async function statObject(
+  key: string
+): Promise<{ size: number; mimeType: string } | null> {
+  const client = storageClient();
+  if (!client) return null;
+  const slash = key.lastIndexOf("/");
+  const folder = slash >= 0 ? key.slice(0, slash) : "";
+  const name = slash >= 0 ? key.slice(slash + 1) : key;
+  const { data, error } = await client.storage
+    .from(ATTACHMENTS_BUCKET)
+    .list(folder, { search: name, limit: 100 });
+  if (error || !data) return null;
+  const obj = data.find((o) => o.name === name);
+  if (!obj) return null;
+  const meta = (obj.metadata ?? {}) as { size?: number; mimetype?: string };
+  return {
+    size: typeof meta.size === "number" ? meta.size : 0,
+    mimeType: meta.mimetype || "application/octet-stream",
+  };
+}
+
 /** A short-lived signed URL for a private object (default 1h). */
 export async function signedUrl(
   key: string,

@@ -108,23 +108,65 @@ function AttachmentsSection({
     if (files.length === 0 || busy) return;
     setError(null);
     setBusy(true);
+    // Each file goes straight to Supabase via a one-time signed URL, so large
+    // videos skip our API's ~4.5 MB request-body limit. Screenshots are shrunk
+    // first; videos and other files pass through unchanged.
+    const created: AttachmentMeta[] = [];
+    const base = `/api/projects/${projectId}/executions/${executionId}/attachments`;
     try {
-      // Shrink screenshots client-side so they fit the size cap; videos and
-      // other files pass through unchanged.
       const prepared = await Promise.all(files.map((f) => compressImage(f)));
-      const form = new FormData();
-      for (const f of prepared) form.append("files", f);
-      const res = await fetch(
-        `/api/projects/${projectId}/executions/${executionId}/attachments`,
-        { method: "POST", body: form }
-      );
-      const body = await res.json().catch(() => null);
-      if (!res.ok) {
-        setError(body?.error ?? "Upload failed");
-        return;
+      for (const f of prepared) {
+        const fileName = f.name || "attachment";
+        const mimeType = f.type || "application/octet-stream";
+
+        // 1) Ask the server for a single-use signed upload URL.
+        const signRes = await fetch(`${base}/sign`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ fileName, mimeType, size: f.size }),
+        });
+        const signBody = await signRes.json().catch(() => null);
+        if (!signRes.ok) {
+          setError(signBody?.error ?? "Upload failed");
+          break;
+        }
+        const { key, uploadUrl } = signBody as {
+          key: string;
+          uploadUrl: string;
+        };
+
+        // 2) PUT the bytes directly to Supabase Storage.
+        let putOk = false;
+        try {
+          const fd = new FormData();
+          fd.append("cacheControl", "3600");
+          fd.append("", f);
+          const putRes = await fetch(uploadUrl, { method: "PUT", body: fd });
+          putOk = putRes.ok;
+        } catch {
+          putOk = false;
+        }
+        if (!putOk) {
+          setError(`Could not upload "${fileName}" — it may exceed the size limit.`);
+          break;
+        }
+
+        // 3) Confirm — the server records the attachment from the stored object.
+        const confRes = await fetch(`${base}/confirm`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ key, fileName, mimeType }),
+        });
+        const confBody = await confRes.json().catch(() => null);
+        if (!confRes.ok) {
+          setError(confBody?.error ?? "Upload failed");
+          break;
+        }
+        created.push(confBody.attachment as AttachmentMeta);
       }
-      onChange([...items, ...(body.attachments as AttachmentMeta[])]);
     } finally {
+      // Surface whatever succeeded, even if a later file failed.
+      if (created.length) onChange([...items, ...created]);
       setBusy(false);
     }
   }
@@ -218,7 +260,7 @@ function AttachmentsSection({
       >
         {busy
           ? "Uploading…"
-          : "Drop files, paste a screenshot, or click to browse (images auto-compressed · 5 MB max)"}
+          : "Drop files, paste a screenshot, or click to browse (images auto-compressed · 10 MB max)"}
       </div>
       {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
     </div>

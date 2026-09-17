@@ -6,27 +6,15 @@ import {
   deleteFromStorage,
   attachmentStorageKey,
 } from "@/lib/storage";
+import {
+  MAX_FILE_BYTES,
+  MAX_FILE_LABEL,
+  MAX_PER_EXECUTION,
+  ALLOWED_TYPES,
+} from "@/lib/attachments";
 import { randomUUID } from "crypto";
 
 export const runtime = "nodejs";
-
-const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5 MB
-const MAX_PER_EXECUTION = 20;
-
-// Screenshots, logs and common report formats.
-const ALLOWED_TYPES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/webp",
-  "application/pdf",
-  "text/plain",
-  "text/csv",
-  "application/json",
-  "application/zip",
-  "video/mp4",
-  "video/webm",
-]);
 
 export type AttachmentMeta = {
   id: string;
@@ -71,7 +59,7 @@ export async function POST(
   for (const f of files) {
     if (f.size > MAX_FILE_BYTES) {
       return Response.json(
-        { error: `"${f.name}" is over the 5 MB limit` },
+        { error: `"${f.name}" is over the ${MAX_FILE_LABEL} limit` },
         { status: 400 }
       );
     }
