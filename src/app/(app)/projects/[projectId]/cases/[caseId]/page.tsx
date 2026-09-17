@@ -80,15 +80,6 @@ export default async function CasePage({
   }));
   const users = members.map((m) => m.user);
 
-  // Folder breadcrumb path.
-  const byId = new Map(suites.map((s) => [s.id, s]));
-  const parts: string[] = [];
-  let cur = byId.get(testCase.suiteId);
-  while (cur) {
-    parts.unshift(cur.name);
-    cur = cur.parentSuiteId ? byId.get(cur.parentSuiteId) : undefined;
-  }
-
   const rawCustom = (testCase.customFields ?? {}) as Record<string, unknown>;
   const customFields: Record<string, string> = {};
   for (const [k, v] of Object.entries(rawCustom)) customFields[k] = String(v ?? "");
@@ -122,7 +113,6 @@ export default async function CasePage({
         projectId={projectId}
         initial={data}
         suiteOptions={suiteOptions}
-        folderPath={parts.join(" / ")}
         users={users}
         executions={execRows}
         returnTo={safeReturnTo}

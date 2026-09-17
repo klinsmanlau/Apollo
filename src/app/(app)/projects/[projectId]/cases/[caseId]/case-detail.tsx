@@ -166,7 +166,6 @@ export function CaseDetail({
   projectId,
   initial,
   suiteOptions,
-  folderPath,
   users,
   executions,
   returnTo,
@@ -174,7 +173,6 @@ export function CaseDetail({
   projectId: string;
   initial: CaseData;
   suiteOptions: Opt[];
-  folderPath: string;
   users: CaseUser[];
   executions: CaseExecRow[];
   /** Set when this page was opened from a test cycle's case list — shows a
@@ -285,12 +283,18 @@ export function CaseDetail({
       <div className="shrink-0">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <button
-              onClick={goBack}
-              className="inline-flex items-center gap-1.5 text-sm text-subtle transition-colors hover:text-fg"
-            >
-              <ArrowLeft size={14} /> {folderPath || "Back"}
-            </button>
+            <nav className="flex items-center gap-1.5 text-sm text-subtle">
+              <button
+                onClick={goBack}
+                className="inline-flex items-center gap-1.5 transition-colors hover:text-fg"
+              >
+                <ArrowLeft size={14} /> Test Case Library
+              </button>
+              <span aria-hidden>/</span>
+              <span className="truncate text-muted">
+                {c.title || "Untitled test case"}
+              </span>
+            </nav>
             {c.key && (
               <p className="mt-1 font-mono text-xs text-subtle">{c.key}</p>
             )}

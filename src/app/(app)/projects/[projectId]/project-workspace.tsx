@@ -376,6 +376,102 @@ export function ProjectWorkspace({
     router.refresh();
   }
 
+  // ---- persist & restore the tree state --------------------------------
+  // Returning from a case detail (Back, or the "Test Case Library" breadcrumb)
+  // should show the exact same screen: the same folder selected AND expanded,
+  // same page/search/sort/filters — not the collapsed default. The workspace is
+  // a separate route from the case page, so it unmounts and its state is lost;
+  // we stash a snapshot in sessionStorage (per-tab, cleared on tab close) and
+  // reapply it after mount (kept out of the initial render to avoid an SSR
+  // hydration mismatch, same pattern as the panel width above).
+  const STORAGE_KEY = `ws-state:${projectId}`;
+  type WSSnapshot = {
+    expanded: string[];
+    selectedSuite: string | null;
+    page: number;
+    caseQuery: string;
+    sortField: SortField | null;
+    sortDir: SortDir;
+    filters: CaseFilter[];
+  };
+  const restored = useRef(false);
+  const skipPersist = useRef(true);
+
+  useEffect(() => {
+    if (restored.current) return;
+    restored.current = true;
+    let parsed: WSSnapshot | null = null;
+    try {
+      const raw = sessionStorage.getItem(STORAGE_KEY);
+      if (raw) parsed = JSON.parse(raw) as WSSnapshot;
+    } catch {}
+    if (!parsed) return;
+    const snap = parsed; // const → narrows inside the closures below
+
+    // A ?folder= deep link wins for which folder is selected; otherwise use the
+    // saved one (dropping it if that folder no longer exists).
+    const deepLinked = !!initialFolder && suites.some((s) => s.id === initialFolder);
+    const eff: string | null = deepLinked
+      ? initialFolder!
+      : snap.selectedSuite === ARCHIVED ||
+          (snap.selectedSuite && suites.some((s) => s.id === snap.selectedSuite))
+        ? snap.selectedSuite
+        : null;
+
+    // Restore expansion, and force-open the selected folder's ancestors so it
+    // is actually visible in the tree.
+    const exp = new Set(snap.expanded);
+    let cur =
+      eff && eff !== ARCHIVED
+        ? suites.find((s) => s.id === eff)?.parentSuiteId ?? null
+        : null;
+    while (cur) {
+      exp.add(cur);
+      cur = suites.find((s) => s.id === cur)?.parentSuiteId ?? null;
+    }
+    setExpanded(exp);
+    setSelectedSuite(eff);
+    setPage(snap.page);
+    setCaseQuery(snap.caseQuery);
+    setSortField(snap.sortField);
+    setSortDir(snap.sortDir);
+    sortRef.current = { field: snap.sortField, dir: snap.sortDir };
+    setFilters(snap.filters);
+    filtersRef.current = snap.filters;
+
+    // Rows aren't stored — refetch only when the restored scope differs from
+    // what the server already rendered (folder=null, page 0, no search/sort).
+    const needReload =
+      eff !== (initialFolder ?? null) ||
+      snap.page !== 0 ||
+      !!snap.caseQuery.trim() ||
+      !!snap.sortField ||
+      snap.filters.length > 0;
+    if (needReload) load(eff, snap.caseQuery, snap.page, snap.sortField, snap.sortDir);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    // Skip the first commit so the default state can't overwrite the saved
+    // snapshot before the restore effect above has run.
+    if (skipPersist.current) {
+      skipPersist.current = false;
+      return;
+    }
+    try {
+      const snap: WSSnapshot = {
+        expanded: [...expanded],
+        selectedSuite,
+        page,
+        caseQuery,
+        sortField,
+        sortDir,
+        filters,
+      };
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(snap));
+    } catch {}
+  }, [STORAGE_KEY, expanded, selectedSuite, page, caseQuery, sortField, sortDir, filters]);
+
   // Optimistic folder reorder: recompute the moved folder's position locally
   // (same gap logic as the server) and persist in the background. No refetch —
   // the tree is client state, so the UI updates instantly.
