@@ -223,10 +223,14 @@ export async function importCases(opts: {
   userId: string;
   buffer: ArrayBuffer | Buffer;
   csv?: boolean; // parse as CSV instead of .xlsx
+  mapping?: Record<string, string>; // header -> target field (from mapping step)
   onStart?: (total: number) => void;
   onProgress?: (done: number, total: number) => void;
 }): Promise<ImportSummary> {
-  const parsed = await parseZephyrWorkbook(opts.buffer, { csv: opts.csv });
+  const parsed = await parseZephyrWorkbook(opts.buffer, {
+    csv: opts.csv,
+    mapping: opts.mapping,
+  });
   const summary = await persistCases({
     projectId: opts.projectId,
     userId: opts.userId,

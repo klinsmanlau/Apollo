@@ -1,6 +1,12 @@
 import ExcelJS from "exceljs";
 import { Readable } from "node:stream";
 import type { Step } from "@/lib/validation";
+import {
+  KNOWN_HEADERS,
+  HEADER_ALIASES,
+  CUSTOM_FIELD,
+  IGNORE_FIELD,
+} from "./fields";
 
 export type ParsedCase = {
   sourceKey: string | null;
@@ -26,29 +32,6 @@ export type ParseResult = {
   skipped: number; // rows without a title
   unmappedHeaders: string[];
 };
-
-// Canonical Zephyr Scale headers we understand (normalized, lowercased).
-const KNOWN_HEADERS = new Set(
-  [
-    "Key",
-    "Name",
-    "Status",
-    "Precondition",
-    "Objective",
-    "Folder",
-    "Priority",
-    "Component",
-    "Labels",
-    "Owner",
-    "Estimated Time",
-    "Coverage (Issues)",
-    "Test Script (Step-by-Step) - Step",
-    "Test Script (Step-by-Step) - Test Data",
-    "Test Script (Step-by-Step) - Expected Result",
-    "Test Script (Plain Text)",
-    "Test Script (BDD)",
-  ].map((h) => h.toLowerCase())
-);
 
 export const PRIORITY_MAP: Record<string, ParsedCase["priority"]> = {
   low: "low",
@@ -108,34 +91,81 @@ function splitList(text: string): string[] {
     .filter(Boolean);
 }
 
-export async function parseZephyrWorkbook(
+// Load the first worksheet from an xlsx buffer or a CSV buffer. ExcelJS reads
+// CSV via fast-csv, which handles quoted, multi-line step cells — so the row
+// mapping downstream is identical for both formats.
+async function loadWorksheet(
   data: ArrayBuffer | Buffer,
-  opts: { csv?: boolean } = {}
-): Promise<ParseResult> {
+  csv?: boolean
+): Promise<ExcelJS.Worksheet | undefined> {
   const wb = new ExcelJS.Workbook();
-  let ws: ExcelJS.Worksheet | undefined;
-  if (opts.csv) {
-    // Zephyr Scale also exports CSV. ExcelJS reads it via fast-csv, which
-    // handles quoted, multi-line step cells — so the header/row mapping below
-    // is identical to the xlsx path.
+  if (csv) {
     const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
-    ws = await wb.csv.read(Readable.from(buf));
-  } else {
-    await wb.xlsx.load(data as ArrayBuffer);
-    ws = wb.worksheets[0];
+    return wb.csv.read(Readable.from(buf));
   }
-  if (!ws) return { cases: [], skipped: 0, unmappedHeaders: [] };
+  await wb.xlsx.load(data as ArrayBuffer);
+  return wb.worksheets[0];
+}
 
-  // Build header -> column index (1-based) from the first row.
-  const headerRow = ws.getRow(1);
-  const colOf: Record<string, number> = {};
-  const unmapped: string[] = [];
-  headerRow.eachCell((cell, col) => {
+/**
+ * Read just the header names + a few sample rows for the import "Field mapping"
+ * step, without persisting anything. `rowCount` is the number of data rows.
+ */
+export async function readWorkbookHeaders(
+  data: ArrayBuffer | Buffer,
+  opts: { csv?: boolean; sampleSize?: number } = {}
+): Promise<{ headers: string[]; sampleRows: string[][]; rowCount: number }> {
+  const ws = await loadWorksheet(data, opts.csv);
+  if (!ws) return { headers: [], sampleRows: [], rowCount: 0 };
+  const headers: string[] = [];
+  const cols: number[] = [];
+  ws.getRow(1).eachCell((cell, col) => {
     const name = cellText(cell.value);
     if (!name) return;
-    const norm = name.toLowerCase();
-    colOf[norm] = col;
-    if (!KNOWN_HEADERS.has(norm)) unmapped.push(name);
+    headers.push(name);
+    cols.push(col);
+  });
+  const sampleSize = opts.sampleSize ?? 5;
+  const sampleRows: string[][] = [];
+  let dataRows = 0;
+  for (let r = 2; r <= ws.rowCount; r++) {
+    const row = ws.getRow(r);
+    if (!row.hasValues) continue;
+    dataRows++;
+    if (sampleRows.length < sampleSize)
+      sampleRows.push(cols.map((c) => cellText(row.getCell(c).value)));
+  }
+  return { headers, sampleRows, rowCount: dataRows };
+}
+
+export async function parseZephyrWorkbook(
+  data: ArrayBuffer | Buffer,
+  opts: { csv?: boolean; mapping?: Record<string, string> } = {}
+): Promise<ParseResult> {
+  const ws = await loadWorksheet(data, opts.csv);
+  if (!ws) return { cases: [], skipped: 0, unmappedHeaders: [] };
+
+  // Decide each column's target field. An explicit user mapping (from the
+  // import "Field mapping" step) wins; otherwise auto-detect via canonical
+  // names + aliases. Real fields go in `colOf`; anything sent to "custom" (or
+  // unrecognized when auto-detecting) is preserved in `customCols` → the case's
+  // custom-fields bag; "ignore" is dropped.
+  const colOf: Record<string, number> = {};
+  const customCols: { col: number; header: string }[] = [];
+  const unmapped: string[] = [];
+  ws.getRow(1).eachCell((cell, col) => {
+    const name = cellText(cell.value);
+    if (!name) return;
+    const target = opts.mapping
+      ? opts.mapping[name] ?? CUSTOM_FIELD
+      : HEADER_ALIASES[name.toLowerCase()] ?? name.toLowerCase();
+    if (target === IGNORE_FIELD) return;
+    if (target === CUSTOM_FIELD || (!opts.mapping && !KNOWN_HEADERS.has(target))) {
+      customCols.push({ col, header: name });
+      unmapped.push(name);
+      return;
+    }
+    colOf[target] = col;
   });
 
   const get = (row: ExcelJS.Row, header: string): string => {
@@ -185,15 +215,12 @@ export async function parseZephyrWorkbook(
     const estRaw = get(row, "Estimated Time");
     const estimatedTime = estRaw ? parseInt(estRaw, 10) : NaN;
 
-    // Long-tail custom fields → lossless bag.
+    // Columns mapped to "custom field" (or unrecognized when auto-detecting)
+    // → lossless bag, keyed by the original header.
     const customFields: Record<string, string> = {};
-    for (const [norm, col] of Object.entries(colOf)) {
-      if (KNOWN_HEADERS.has(norm)) continue;
+    for (const { col, header } of customCols) {
       const val = cellText(row.getCell(col).value);
-      if (val) {
-        const original = cellText(headerRow.getCell(col).value);
-        customFields[original] = val;
-      }
+      if (val) customFields[header] = val;
     }
 
     cases.push({

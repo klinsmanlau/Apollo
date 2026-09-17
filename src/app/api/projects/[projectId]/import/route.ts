@@ -29,6 +29,17 @@ export async function POST(
       { status: 400 }
     );
   }
+  // Optional column mapping from the "Field mapping" step (header -> target).
+  let mapping: Record<string, string> | undefined;
+  const rawMapping = form?.get("mapping");
+  if (typeof rawMapping === "string" && rawMapping) {
+    try {
+      const parsed = JSON.parse(rawMapping);
+      if (parsed && typeof parsed === "object")
+        mapping = parsed as Record<string, string>;
+    } catch {}
+  }
+
   const buffer = Buffer.from(await file.arrayBuffer());
 
   const encoder = new TextEncoder();
@@ -43,6 +54,7 @@ export async function POST(
           userId: user.id,
           buffer,
           csv: isCsv,
+          mapping,
           onStart: (total) => send({ type: "start", total }),
           onProgress: (done, total) => {
             // Throttle to ~100 updates for large imports.
