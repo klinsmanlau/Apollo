@@ -15,9 +15,13 @@ export function ThemeToggle() {
     const next = !dark;
     setDark(next);
     document.documentElement.classList.toggle("dark", next);
+    const value = next ? "dark" : "light";
     try {
-      localStorage.setItem("theme", next ? "dark" : "light");
+      localStorage.setItem("theme", value);
     } catch {}
+    // Cookie is the source of truth for SSR and other tabs — localStorage isn't
+    // sent to the server and can be unavailable in some contexts.
+    document.cookie = `theme=${value}; path=/; max-age=31536000; SameSite=Lax`;
   }
 
   return (
