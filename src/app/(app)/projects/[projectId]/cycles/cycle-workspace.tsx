@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { CycleRow } from "@/lib/cycles-query";
@@ -173,6 +173,88 @@ export function CycleWorkspace({
       if (loadAbort.current === ac) setLoading(false);
     }
   }
+
+  // Returning from a cycle should land on the same folder/search/sort/page, not
+  // the collapsed default. The cycle page is a separate route, so this workspace
+  // unmounts; we stash a snapshot in sessionStorage (per-tab, cleared on tab
+  // close) and reapply it after mount — mirrors the test-cases workspace.
+  const STORAGE_KEY = `cycles-state:${projectId}`;
+  type CWSnapshot = {
+    expanded: string[];
+    selectedFolder: string | null;
+    page: number;
+    cycleQuery: string;
+    sortField: SortField | null;
+    sortDir: SortDir;
+  };
+  const restored = useRef(false);
+  const skipPersist = useRef(true);
+
+  useEffect(() => {
+    if (restored.current) return;
+    restored.current = true;
+    let parsed: CWSnapshot | null = null;
+    try {
+      const raw = sessionStorage.getItem(STORAGE_KEY);
+      if (raw) parsed = JSON.parse(raw) as CWSnapshot;
+    } catch {}
+    if (!parsed) return;
+    const snap = parsed;
+
+    // A ?folder= deep link wins for the selected folder; otherwise use the saved
+    // one (dropped if that folder no longer exists).
+    const deepLinked = !!initialFolder && folders.some((f) => f.id === initialFolder);
+    const eff: string | null = deepLinked
+      ? initialFolder!
+      : snap.selectedFolder && folders.some((f) => f.id === snap.selectedFolder)
+        ? snap.selectedFolder
+        : null;
+
+    // Force-open the selected folder's ancestors so it's visible in the tree.
+    const exp = new Set(snap.expanded);
+    let cur = eff ? folders.find((f) => f.id === eff)?.parentFolderId ?? null : null;
+    while (cur) {
+      exp.add(cur);
+      cur = folders.find((f) => f.id === cur)?.parentFolderId ?? null;
+    }
+    setExpanded(exp);
+    setSelectedFolder(eff);
+    setPage(snap.page);
+    setCycleQuery(snap.cycleQuery);
+    setSortField(snap.sortField);
+    setSortDir(snap.sortDir);
+    sortRef.current = { field: snap.sortField, dir: snap.sortDir };
+
+    // Rows aren't stored — refetch only when the restored scope differs from
+    // what the server already rendered (folder=initial, page 0, no search/sort).
+    const needReload =
+      eff !== (initialFolder ?? null) ||
+      snap.page !== 0 ||
+      !!snap.cycleQuery.trim() ||
+      !!snap.sortField;
+    if (needReload) load(eff, snap.cycleQuery, snap.page, snap.sortField, snap.sortDir);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    // Skip the first commit so the default state can't overwrite the saved
+    // snapshot before the restore effect above runs.
+    if (skipPersist.current) {
+      skipPersist.current = false;
+      return;
+    }
+    try {
+      const snap: CWSnapshot = {
+        expanded: [...expanded],
+        selectedFolder,
+        page,
+        cycleQuery,
+        sortField,
+        sortDir,
+      };
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(snap));
+    } catch {}
+  }, [STORAGE_KEY, expanded, selectedFolder, page, cycleQuery, sortField, sortDir]);
 
   function selectFolder(id: string | null) {
     setSelectedFolder(id);
