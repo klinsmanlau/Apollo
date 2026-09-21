@@ -281,17 +281,6 @@ function fmtEst(sec: number | null): string {
   return `${h}:${String(m).padStart(2, "0")}`;
 }
 
-function deriveStatus(steps: Step[], results: StepResult[]): ExecutionStatus {
-  if (steps.length === 0) return "not_executed";
-  const st = steps.map((_, i) => results[i]?.status || "");
-  if (st.some((s) => s === "fail")) return "fail";
-  if (st.some((s) => s === "blocked")) return "blocked";
-  const marked = st.filter(Boolean).length;
-  if (marked === 0) return "not_executed";
-  if (marked === steps.length && st.every((s) => s === "pass")) return "pass";
-  return "in_progress";
-}
-
 function Section({
   title,
   right,
@@ -509,24 +498,11 @@ export function TestPlayer({
       status: results[stepIndex]?.status === status ? "" : status,
       actual: results[stepIndex]?.actual,
     };
-    // Evidence gate (mirrors the server): marking every step Pass must not
-    // silently pass the case without evidence. Keep the steps, but hold the
-    // case at "in progress" and prompt — instead of sending a Pass the server
-    // would only reject.
-    const derived = deriveStatus(e.caseSteps, results);
-    const evidence = hasEvidence({
-      attachments: e.attachments,
-      stepResults: results,
-    });
-    if (derived === "pass" && !evidence) {
-      patchExec(execId, { stepResults: results, status: "in_progress" });
-      setActionError(
-        "Add evidence (an attachment or an image in the actual result) before marking this case as Passed."
-      );
-      return;
-    }
-    if (derived === "pass") setActionError(null);
-    patchExec(execId, { stepResults: results, status: derived });
+    // Step results are independent of the case status: recording steps never
+    // changes it. The tester sets the case status explicitly via the status
+    // dropdown, where the evidence gate (an attachment or an image in an actual
+    // result) is enforced on Pass.
+    patchExec(execId, { stepResults: results });
   }
 
   function setStepActual(execId: string, stepIndex: number, html: string) {
