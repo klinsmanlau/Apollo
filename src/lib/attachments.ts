@@ -27,4 +27,5 @@ export const ALLOWED_TYPES = new Set([
   "application/zip",
   "video/mp4",
   "video/webm",
+  "video/quicktime", // .mov — iOS / Simulator screen recordings
 ]);
