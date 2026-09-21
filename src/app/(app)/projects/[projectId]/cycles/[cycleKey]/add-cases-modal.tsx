@@ -4,12 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Modal } from "@/components/modal";
 import { PriorityFlag } from "@/components/ui";
 import { addCasesToCycle } from "@/lib/actions/cycles";
-import {
-  ArrowLeft,
-  ChevronDown,
-  ChevronRight,
-  ExternalLink,
-} from "@/components/icons";
+import { ArrowLeft, ChevronDown, ChevronRight } from "@/components/icons";
 import type { Priority } from "@prisma/client";
 import type { WSuite } from "../../project-workspace";
 
@@ -358,21 +353,24 @@ export function AddCasesModal({
                       }
                     />
                     <PriorityFlag priority={c.priority} />
-                    <span className="w-20 shrink-0 font-mono text-xs text-subtle">
-                      {c.key ?? "—"}
-                    </span>
+                    {c.key ? (
+                      <a
+                        href={`/projects/${caseProjectId ?? projectId}/cases/${c.key}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Open case details in a new tab"
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-20 shrink-0 truncate font-mono text-xs text-ring hover:underline"
+                      >
+                        {c.key}
+                      </a>
+                    ) : (
+                      <span className="w-20 shrink-0 font-mono text-xs text-subtle">
+                        —
+                      </span>
+                    )}
                     <span className="flex-1 truncate text-fg">{c.title}</span>
                     {added && <span className="text-xs text-subtle">added</span>}
-                    <a
-                      href={`/projects/${caseProjectId ?? projectId}/cases/${c.key ?? c.id}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      title="Open case details in a new tab"
-                      onClick={(e) => e.stopPropagation()}
-                      className="shrink-0 rounded p-1 text-subtle hover:bg-surface hover:text-ring"
-                    >
-                      <ExternalLink size={14} />
-                    </a>
                   </label>
                 );
               })}
