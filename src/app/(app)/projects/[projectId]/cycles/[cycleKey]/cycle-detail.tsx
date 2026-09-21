@@ -597,6 +597,7 @@ export function CycleDetail({
                 suites={c.suites}
                 suiteCounts={c.suiteCounts}
                 onAdded={() => router.refresh()}
+                caseProjectId={caseProjectId}
               />
               <TestersDropdown
                 disabled={selected.size === 0}

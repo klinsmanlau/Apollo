@@ -4,7 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Modal } from "@/components/modal";
 import { PriorityFlag } from "@/components/ui";
 import { addCasesToCycle } from "@/lib/actions/cycles";
-import { ArrowLeft, ChevronDown, ChevronRight } from "@/components/icons";
+import {
+  ArrowLeft,
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+} from "@/components/icons";
 import type { Priority } from "@prisma/client";
 import type { WSuite } from "../../project-workspace";
 
@@ -104,6 +109,7 @@ export function AddCasesModal({
   suites,
   suiteCounts,
   onAdded,
+  caseProjectId,
 }: {
   projectId: string;
   cycleId: string;
@@ -111,6 +117,9 @@ export function AddCasesModal({
   suites: WSuite[];
   suiteCounts: Record<string, number>;
   onAdded: () => void;
+  // Project a case's detail page lives in — the shared QA-team source for a POD,
+  // or this project itself. Used for the per-row "open case" link.
+  caseProjectId?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<CaseLite[]>([]);
@@ -354,6 +363,16 @@ export function AddCasesModal({
                     </span>
                     <span className="flex-1 truncate text-fg">{c.title}</span>
                     {added && <span className="text-xs text-subtle">added</span>}
+                    <a
+                      href={`/projects/${caseProjectId ?? projectId}/cases/${c.key ?? c.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Open case details in a new tab"
+                      onClick={(e) => e.stopPropagation()}
+                      className="shrink-0 rounded p-1 text-subtle hover:bg-surface hover:text-ring"
+                    >
+                      <ExternalLink size={14} />
+                    </a>
                   </label>
                 );
               })}
