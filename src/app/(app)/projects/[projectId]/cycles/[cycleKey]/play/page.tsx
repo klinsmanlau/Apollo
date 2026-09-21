@@ -1,10 +1,11 @@
 import { Suspense } from "react";
+import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth";
 import type { Step } from "@/lib/validation";
 import { caseSourceProjectId } from "@/lib/case-source";
-import { TestPlayer, type PlayerData } from "./test-player";
+import { TestPlayer, type PlayerData, VIEW_COOKIE } from "./test-player";
 
 export default async function PlayerPage({
   params,
@@ -13,6 +14,12 @@ export default async function PlayerPage({
 }) {
   const { projectId, cycleKey } = await params;
   const user = await requireUser();
+
+  // Seed the Test Player's view preferences from the cookie so SSR matches the
+  // client's first paint (no reset flash). Value is "<groupBy>.<0|1>".
+  const [viewGroupBy, viewAssigned] = (
+    (await cookies()).get(VIEW_COOKIE)?.value ?? ""
+  ).split(".");
 
   const [cycle, members, project] = await Promise.all([
     prisma.testRun.findFirst({
@@ -112,6 +119,8 @@ export default async function PlayerPage({
           currentUserName={user.name ?? user.email}
           defaultJiraProjectKey={project?.keyPrefix ?? null}
           caseProjectId={caseSourceProjectId(projectId)}
+          initialGroupBy={viewGroupBy || null}
+          initialAssignedToMe={viewAssigned === "1"}
         />
       </Suspense>
     </div>

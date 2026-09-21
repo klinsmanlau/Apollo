@@ -68,6 +68,21 @@ const GROUP_OPTIONS: { value: GroupBy; label: string }[] = [
   { value: "folder", label: "Folder" },
 ];
 
+// Test Player view preferences persist in a cookie so the server can seed the
+// same initial state it renders (see the play page) — no hydration mismatch and
+// no reset flash on reload. Value is "<groupBy>.<0|1 assignedToMe>".
+export const VIEW_COOKIE = "apollo_tpview";
+function coerceGroupBy(value: string | null | undefined): GroupBy {
+  return GROUP_OPTIONS.some((o) => o.value === value)
+    ? (value as GroupBy)
+    : "priority";
+}
+function saveView(groupBy: GroupBy, assignedToMe: boolean) {
+  try {
+    document.cookie = `${VIEW_COOKIE}=${groupBy}.${assignedToMe ? 1 : 0}; path=/; max-age=31536000; SameSite=Lax`;
+  } catch {}
+}
+
 export type PlayerData = {
   cycle: { id: string; key: string | null; name: string; startDate: string; endDate: string };
   users: { id: string; name: string | null; email: string }[];
@@ -103,6 +118,8 @@ function AttachmentsSection({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  // Image/video attachment opened in the inline lightbox (null = closed).
+  const [preview, setPreview] = useState<AttachmentMeta | null>(null);
 
   async function upload(files: File[]) {
     if (files.length === 0 || busy) return;
@@ -206,14 +223,37 @@ function AttachmentsSection({
           {items.map((a) => (
             <li key={a.id} className="group relative">
               {a.mimeType.startsWith("image/") ? (
-                <a href={url(a.id)} target="_blank" rel="noreferrer" title={a.fileName}>
+                <button
+                  type="button"
+                  onClick={() => setPreview(a)}
+                  title={`Preview ${a.fileName}`}
+                  className="block"
+                >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={url(a.id)}
                     alt={a.fileName}
                     className="h-20 w-28 rounded-md border border-line object-cover transition-opacity hover:opacity-90"
                   />
-                </a>
+                </button>
+              ) : a.mimeType.startsWith("video/") ? (
+                <button
+                  type="button"
+                  onClick={() => setPreview(a)}
+                  title={`Preview ${a.fileName}`}
+                  className="relative block h-20 w-28 overflow-hidden rounded-md border border-line bg-black"
+                >
+                  <video
+                    src={url(a.id)}
+                    muted
+                    playsInline
+                    preload="metadata"
+                    className="h-full w-full object-cover opacity-90"
+                  />
+                  <span className="absolute inset-0 flex items-center justify-center text-white/90">
+                    <Play size={22} />
+                  </span>
+                </button>
               ) : (
                 <a
                   href={url(a.id)}
@@ -263,6 +303,45 @@ function AttachmentsSection({
           : "Drop files, paste a screenshot, or click to browse (images auto-compressed · 10 MB max)"}
       </div>
       {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
+
+      {preview && (
+        <div
+          onClick={() => setPreview(null)}
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/80 p-6"
+        >
+          <div className="mb-2 flex w-full max-w-5xl items-center justify-between text-sm text-white/90">
+            <span className="truncate" title={preview.fileName}>
+              {preview.fileName}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPreview(null)}
+              title="Close"
+              className="ml-3 rounded p-1 hover:bg-white/10"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          {/* Stop clicks on the media from closing the lightbox. */}
+          <div onClick={(e) => e.stopPropagation()} className="max-h-[80vh] max-w-5xl">
+            {preview.mimeType.startsWith("video/") ? (
+              <video
+                src={url(preview.id)}
+                controls
+                autoPlay
+                className="max-h-[80vh] max-w-full rounded-md"
+              />
+            ) : (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={url(preview.id)}
+                alt={preview.fileName}
+                className="max-h-[80vh] max-w-full rounded-md object-contain"
+              />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -411,6 +490,8 @@ export function TestPlayer({
   currentUserId,
   currentUserName,
   caseProjectId,
+  initialGroupBy,
+  initialAssignedToMe = false,
 }: {
   projectId: string;
   cycleKey: string;
@@ -421,13 +502,17 @@ export function TestPlayer({
   // The project a case's detail page lives in — the shared QA-team source for a
   // POD, or this project itself. Case links point here so they resolve.
   caseProjectId?: string;
+  // View preferences seeded from the cookie by the server, so the first paint
+  // matches SSR (no reset flash).
+  initialGroupBy?: string | null;
+  initialAssignedToMe?: boolean;
 }) {
   const [execs, setExecs] = useState<PlayerExec[]>(data.executions);
   const [idx, setIdx] = useState(0);
   const [search, setSearch] = useState("");
-  const [groupBy, setGroupBy] = useState<GroupBy>("priority");
+  const [groupBy, setGroupBy] = useState<GroupBy>(() => coerceGroupBy(initialGroupBy));
   const [groupOpen, setGroupOpen] = useState(false);
-  const [assignedToMe, setAssignedToMe] = useState(false);
+  const [assignedToMe, setAssignedToMe] = useState(initialAssignedToMe);
   const [setBelowFor, setSetBelowFor] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [elapsed, setElapsed] = useState(data.executions[0]?.actualTime ?? 0);
@@ -452,6 +537,19 @@ export function TestPlayer({
     const t = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(t);
   }, [running]);
+
+  // Persist the "Group by" / "Assigned to me" preferences to the cookie so the
+  // next server render seeds the same initial state. Skip the mount write so a
+  // render that (for any reason) starts at the defaults can't clobber the saved
+  // cookie — only an actual user change updates it.
+  const skipCookieWrite = useRef(true);
+  useEffect(() => {
+    if (skipCookieWrite.current) {
+      skipCookieWrite.current = false;
+      return;
+    }
+    saveView(groupBy, assignedToMe);
+  }, [groupBy, assignedToMe]);
 
   function patchExec(id: string, patch: Partial<PlayerExec>) {
     // Snapshot the fields being changed so we can roll back if the server
