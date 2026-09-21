@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth";
 import { suiteCaseCounts } from "@/lib/cases-query";
+import { caseSourceProjectId, usesSharedLibrary } from "@/lib/case-source";
 import { CycleDetail, type CycleData } from "./cycle-detail";
 
 export default async function CycleRunPage({
@@ -37,12 +38,14 @@ export default async function CycleRunPage({
       where: { projectId },
       select: { user: { select: { id: true, name: true, email: true } } },
     }),
+    // Suites + counts for the folder tree come from this project's case library
+    // — its own, or (for a POD) the shared QA-team source it draws from.
     prisma.testSuite.findMany({
-      where: { projectId },
+      where: { projectId: caseSourceProjectId(projectId) },
       select: { id: true, name: true, parentSuiteId: true, position: true },
       orderBy: [{ position: "asc" }, { name: "asc" }],
     }),
-    suiteCaseCounts(projectId),
+    suiteCaseCounts(caseSourceProjectId(projectId)),
   ]);
   if (!cycle) notFound();
 
@@ -112,6 +115,7 @@ export default async function CycleRunPage({
         initial={data}
         currentUserId={user.id}
         currentUserName={user.name ?? user.email}
+        sharedLibrary={usesSharedLibrary(projectId)}
       />
     </div>
   );

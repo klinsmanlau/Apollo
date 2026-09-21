@@ -212,6 +212,9 @@ export function AddCasesModal({
       const ids = [...(subtreeOf.get(folderVal) ?? [folderVal])];
       params.set("suiteIds", ids.join(","));
     }
+    // Cases come from this project's library — its own, or the shared QA-team
+    // source for a POD. `source=1` makes the API resolve that (see the route).
+    params.set("source", "1");
     const res = await fetch(`/api/projects/${projectId}/cases?${params}`, {
       cache: "no-store",
     });

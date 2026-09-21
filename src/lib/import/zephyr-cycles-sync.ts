@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { nextCycleKey, parseKey } from "@/lib/keys";
+import { caseSourceProjectId } from "@/lib/case-source";
 import { fetchZephyrCycles } from "./zephyr-cycles-api";
 import type { ExecutionStatus, Prisma } from "@prisma/client";
 
@@ -84,11 +85,14 @@ export async function syncCyclesFromZephyr(opts: {
     return parentId as string;
   }
 
-  // Preload case sourceKey → id for the whole project (one pass, chunked).
+  // Preload case sourceKey → id from this project's case library. For a POD
+  // that's the shared QA-team source project (the POD owns cycles, not cases),
+  // so its executions link to the shared cases; for the source project itself
+  // it's its own cases.
   const idByKey = new Map<string, string>();
   {
     const all = await prisma.testCase.findMany({
-      where: { suite: { projectId: opts.projectId } },
+      where: { suite: { projectId: caseSourceProjectId(opts.projectId) } },
       select: { id: true, key: true, sourceKey: true },
     });
     for (const c of all) {

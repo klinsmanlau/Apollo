@@ -9,6 +9,7 @@ import {
   roleAtLeast,
 } from "@/lib/auth";
 import { nextCycleKey, parseKey } from "@/lib/keys";
+import { caseSourceProjectId } from "@/lib/case-source";
 import type { ExecutionStatus, CycleStatus, Prisma } from "@prisma/client";
 
 // ---- Cycles ---------------------------------------------------------------
@@ -270,9 +271,13 @@ export async function addCasesToCycle(cycleId: string, caseIds: string[]) {
   await requireProjectRole(run.projectId, "lead");
   if (caseIds.length === 0) return { added: 0 };
 
-  // Only link cases that belong to the cycle's project.
+  // Only link cases from this project's case library — its own cases, or (for a
+  // POD) the shared QA-team source project it draws from.
   const valid = await prisma.testCase.findMany({
-    where: { id: { in: caseIds }, suite: { projectId: run.projectId } },
+    where: {
+      id: { in: caseIds },
+      suite: { projectId: caseSourceProjectId(run.projectId) },
+    },
     select: { id: true },
   });
 
