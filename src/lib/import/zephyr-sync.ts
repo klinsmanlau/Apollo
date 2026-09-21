@@ -1,10 +1,11 @@
-import { persistCases } from "./run";
+import { persistCases, pruneEmptySuites } from "./run";
 import { fetchZephyrCases } from "./zephyr-api";
 
 export type ZephyrSyncSummary = {
   created: number;
   updated: number;
   suitesCreated: number;
+  suitesDeleted: number;
   total: number;
 };
 
@@ -20,6 +21,10 @@ export async function syncFromZephyr(opts: {
   projectKey: string;
   onProgress?: (phase: "fetch" | "persist", done: number, total: number) => void;
 }): Promise<ZephyrSyncSummary> {
+  // Anything created from here on is spared by the prune below, so a folder a
+  // teammate adds mid-sync (migration period) can't be mistaken for a deletion.
+  const startedAt = new Date();
+
   const cases = await fetchZephyrCases({
     token: opts.token,
     projectKey: opts.projectKey,
@@ -33,5 +38,10 @@ export async function syncFromZephyr(opts: {
     onProgress: (d, t) => opts.onProgress?.("persist", d, t),
   });
 
-  return summary;
+  // Zephyr is authoritative and we just fetched *every* live case, so any suite
+  // now empty across its whole subtree was deleted in Zephyr — prune it, but
+  // spare folders created after this sync began (see pruneEmptySuites).
+  const suitesDeleted = await pruneEmptySuites(opts.projectId, startedAt);
+
+  return { ...summary, suitesDeleted };
 }

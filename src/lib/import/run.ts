@@ -215,6 +215,92 @@ export async function persistCases(opts: {
 }
 
 /**
+ * Delete suites (folders) that hold no test cases anywhere in their subtree.
+ *
+ * Meant to run right after a *full* Zephyr sync, where Zephyr is the source of
+ * truth: a folder deleted in Zephyr keeps existing in Apollo as an empty shell,
+ * so once the sync has re-populated every live folder, anything left with zero
+ * cases in its whole subtree is stale and gets pruned. Only the top of each
+ * empty subtree is deleted — the `onDelete: Cascade` on `parentSuiteId` removes
+ * its (also-empty) descendants — and the returned count includes those.
+ *
+ * `keepCreatedAtOrAfter` is a migration-period guard: while both Zephyr and
+ * Apollo are in use, a folder created at/after that instant is spared even when
+ * empty (it appeared after the sync began, so it can't be a Zephyr deletion and
+ * may be one a teammate is still filling in). A subtree is kept if it contains
+ * any case OR any such recent folder. Omit it to prune purely by emptiness.
+ *
+ * NOTE: do NOT call this after a partial .xlsx import; there it would wrongly
+ * delete folders whose cases simply weren't in that particular upload.
+ */
+export async function pruneEmptySuites(
+  projectId: string,
+  keepCreatedAtOrAfter?: Date
+): Promise<number> {
+  const suites = await prisma.testSuite.findMany({
+    where: { projectId },
+    select: {
+      id: true,
+      parentSuiteId: true,
+      createdAt: true,
+      _count: { select: { cases: true } },
+    },
+  });
+
+  const childrenOf = new Map<string, string[]>();
+  // A suite protects itself if it holds cases, or (migration guard) if it was
+  // created at/after the cutoff.
+  const directProtected = new Map<string, boolean>();
+  for (const s of suites) {
+    const recent =
+      keepCreatedAtOrAfter != null && s.createdAt >= keepCreatedAtOrAfter;
+    directProtected.set(s.id, s._count.cases > 0 || recent);
+    if (s.parentSuiteId) {
+      const arr = childrenOf.get(s.parentSuiteId) ?? [];
+      arr.push(s.id);
+      childrenOf.set(s.parentSuiteId, arr);
+    }
+  }
+
+  // Memoised post-order: is this suite, or anything under it, protected?
+  const protectedSubtree = new Map<string, boolean>();
+  function isProtected(id: string): boolean {
+    const cached = protectedSubtree.get(id);
+    if (cached !== undefined) return cached;
+    let result = directProtected.get(id) ?? false;
+    for (const child of childrenOf.get(id) ?? []) {
+      // Call first so every node is memoised, then OR — no short-circuit.
+      const childProtected = isProtected(child);
+      result = result || childProtected;
+    }
+    protectedSubtree.set(id, result);
+    return result;
+  }
+  for (const s of suites) isProtected(s.id);
+
+  const parentPrunable = (parentId: string | null) =>
+    parentId !== null && protectedSubtree.get(parentId) === false;
+
+  // Roots of prunable subtrees: unprotected, but whose parent is protected (or
+  // a real project root). Deleting these cascades to their descendants.
+  const rootsToDelete = suites
+    .filter(
+      (s) =>
+        protectedSubtree.get(s.id) === false && !parentPrunable(s.parentSuiteId)
+    )
+    .map((s) => s.id);
+  if (rootsToDelete.length === 0) return 0;
+
+  // Total folders removed = every unprotected suite (roots + cascaded kids).
+  const totalPruned = suites.filter(
+    (s) => protectedSubtree.get(s.id) === false
+  ).length;
+
+  await prisma.testSuite.deleteMany({ where: { id: { in: rootsToDelete } } });
+  return totalPruned;
+}
+
+/**
  * Parse a Zephyr workbook and import its cases (via persistCases). Reports
  * progress through the callbacks so the caller can stream it to the client.
  */
