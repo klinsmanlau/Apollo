@@ -7,7 +7,7 @@
 // drawing to a canvas would flatten their animation.
 
 const MAX_DIMENSION = 1920; // longest edge, px
-const TARGET_BYTES = 3.5 * 1024 * 1024; // aim well under the 5 MB cap
+const TARGET_BYTES = 3.5 * 1024 * 1024; // aim well under the 10 MB upload cap
 const MIN_QUALITY = 0.5;
 
 const COMPRESSIBLE = new Set(["image/png", "image/jpeg", "image/webp"]);
