@@ -21,7 +21,15 @@ export const getCurrentUser = cache(async (): Promise<User | null> => {
   const existing = await prisma.user.findUnique({
     where: { clerkUserId: userId },
   });
-  if (existing) return existing;
+  if (existing) {
+    // Internal-team model: keep every user a member of every project, so a
+    // project created after they signed up (including ones created directly in
+    // the DB) is picked up automatically. Idempotent — only inserts what's
+    // missing. Cached per request via the surrounding cache(), so this runs at
+    // most once per request.
+    await ensureMemberOfAllProjects(existing.id);
+    return existing;
+  }
 
   // Fallback provisioning if the webhook hasn't run yet.
   const clerk = await currentUser();
@@ -72,29 +80,32 @@ export function hasRole(user: User, min: Role): boolean {
 /**
  * Effective role from a membership row that was fetched alongside the entity
  * (e.g. `project: { members: { where: { userId } } }`), saving hot server
- * actions the extra role round trip. Global admins bypass membership.
+ * actions the extra role round trip.
+ *
+ * Internal-team model: no per-project role control — every authenticated user
+ * is treated as "admin", matching {@link getProjectRole}. Args kept so callers
+ * don't change.
  */
 export function effectiveRole(
-  user: User,
-  memberRole: Role | null | undefined
+  _user: User,
+  _memberRole: Role | null | undefined
 ): Role | null {
-  return user.role === "admin" ? "admin" : memberRole ?? null;
+  return "admin";
 }
 
 /**
- * The user's effective role in a project, or null if not a member.
- * Global admins (`User.role == admin`) are treated as admin everywhere.
+ * The user's effective role in a project.
+ *
+ * Internal-team model: every authenticated user has full access to every
+ * project, with no per-project role control — so this always resolves to
+ * "admin". (Kept async and membership-shaped so callers/signatures don't
+ * change; membership rows are still maintained for member/assignee lists.)
  */
 export async function getProjectRole(
-  projectId: string,
-  user: User
+  _projectId: string,
+  _user: User
 ): Promise<Role | null> {
-  if (user.role === "admin") return "admin";
-  const m = await prisma.projectMember.findUnique({
-    where: { projectId_userId: { projectId, userId: user.id } },
-    select: { role: true },
-  });
-  return m?.role ?? null;
+  return "admin";
 }
 
 /**
