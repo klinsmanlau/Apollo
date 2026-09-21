@@ -10,9 +10,28 @@ import { EXEC_STATUS_META, execMeta } from "@/lib/exec-status";
 import type { Priority, ExecutionStatus } from "@prisma/client";
 import type { Step } from "@/lib/validation";
 import { ArrowLeft, Ban, Check, ChevronDown, ChevronRight, Flag, Pause, Play, X } from "@/components/icons";
-import { RichTextEditor } from "@/components/rich-text-editor";
+import { RichTextEditor, fileToDataUrl } from "@/components/rich-text-editor";
 
 type StepResult = { status: string; actual?: string };
+
+// Images pasted into a step's Actual Result are embedded inline (base64) in the
+// execution row, not uploaded to storage — so they must stay small. We compress
+// first, then reject anything still over this cap and point the user at the
+// attachments panel (which handles large files via Supabase Storage).
+const INLINE_IMAGE_MAX_BYTES = 1.5 * 1024 * 1024; // 1.5 MB after compression
+const INLINE_IMAGE_MAX_LABEL = "1.5 MB";
+
+async function embedInlineImage(file: File): Promise<string | null> {
+  const compressed = await compressImage(file);
+  if (compressed.size > INLINE_IMAGE_MAX_BYTES) {
+    throw new Error(
+      `Image is too large to embed (max ${INLINE_IMAGE_MAX_LABEL}). Add it as an attachment instead.`
+    );
+  }
+  const url = await fileToDataUrl(compressed);
+  if (!url) throw new Error("Could not read the image.");
+  return url;
+}
 
 /** Evidence for a manual Pass: an execution attachment, or an image embedded
  *  in any step's Actual Result. Kept in sync with the server-side gate. */
@@ -81,6 +100,15 @@ function saveView(groupBy: GroupBy, assignedToMe: boolean) {
   try {
     document.cookie = `${VIEW_COOKIE}=${groupBy}.${assignedToMe ? 1 : 0}; path=/; max-age=31536000; SameSite=Lax`;
   } catch {}
+}
+/** Read the view cookie on the client — the source of truth we reconcile against
+ *  after hydration, in case the server seed didn't take. */
+function readView(): { groupBy: GroupBy; assignedToMe: boolean } | null {
+  if (typeof document === "undefined") return null;
+  const m = document.cookie.match(new RegExp(`(?:^|;\\s*)${VIEW_COOKIE}=([^;]*)`));
+  if (!m) return null;
+  const [g, a] = decodeURIComponent(m[1]).split(".");
+  return { groupBy: coerceGroupBy(g), assignedToMe: a === "1" };
 }
 
 export type PlayerData = {
@@ -300,7 +328,7 @@ function AttachmentsSection({
       >
         {busy
           ? "Uploading…"
-          : "Drop files, paste a screenshot, or click to browse (images auto-compressed · 10 MB max)"}
+          : "Drop files to attach or browse (10 MB max)"}
       </div>
       {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
 
@@ -538,18 +566,27 @@ export function TestPlayer({
     return () => clearInterval(t);
   }, [running]);
 
-  // Persist the "Group by" / "Assigned to me" preferences to the cookie so the
-  // next server render seeds the same initial state. Skip the mount write so a
-  // render that (for any reason) starts at the defaults can't clobber the saved
-  // cookie — only an actual user change updates it.
-  const skipCookieWrite = useRef(true);
+  // The cookie is written only by the change handlers below (never on mount), so
+  // a render that starts at the defaults can't clobber a saved preference. As a
+  // safety net for any environment where the server seed doesn't take, reconcile
+  // against the cookie once after hydration — a no-op (no flash) when they match.
   useEffect(() => {
-    if (skipCookieWrite.current) {
-      skipCookieWrite.current = false;
-      return;
-    }
-    saveView(groupBy, assignedToMe);
-  }, [groupBy, assignedToMe]);
+    const v = readView();
+    if (!v) return;
+    setGroupBy((prev) => (prev === v.groupBy ? prev : v.groupBy));
+    setAssignedToMe((prev) => (prev === v.assignedToMe ? prev : v.assignedToMe));
+    // Mount-only: reconcile once with whatever the browser already has.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function changeGroupBy(next: GroupBy) {
+    setGroupBy(next);
+    saveView(next, assignedToMe);
+  }
+  function changeAssignedToMe(next: boolean) {
+    setAssignedToMe(next);
+    saveView(groupBy, next);
+  }
 
   function patchExec(id: string, patch: Partial<PlayerExec>) {
     // Snapshot the fields being changed so we can roll back if the server
@@ -771,7 +808,7 @@ export function TestPlayer({
                       <button
                         key={o.value}
                         onClick={() => {
-                          setGroupBy(o.value);
+                          changeGroupBy(o.value);
                           setGroupOpen(false);
                         }}
                         className={`block w-full px-3 py-1.5 text-left text-sm hover:bg-surface-muted ${
@@ -789,7 +826,7 @@ export function TestPlayer({
               <input
                 type="checkbox"
                 checked={assignedToMe}
-                onChange={(e) => setAssignedToMe(e.target.checked)}
+                onChange={(e) => changeAssignedToMe(e.target.checked)}
               />
               Show assigned to me
               <span className="rounded bg-surface-muted px-1 py-0.5 text-[10px] text-subtle">
@@ -1124,6 +1161,7 @@ export function TestPlayer({
                             <RichTextEditor
                               value={cur.stepResults[i]?.actual ?? ""}
                               onChange={(html) => setStepActual(cur.id, i, html)}
+                              onImageUpload={embedInlineImage}
                             />
                           </div>
                         </div>
