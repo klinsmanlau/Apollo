@@ -421,7 +421,7 @@ export function TestPlayer({
   data,
   currentUserId,
   currentUserName,
-  sharedLibrary = false,
+  caseProjectId,
 }: {
   projectId: string;
   cycleKey: string;
@@ -429,10 +429,9 @@ export function TestPlayer({
   currentUserId: string;
   currentUserName: string;
   defaultJiraProjectKey?: string | null;
-  // POD cycles run against the shared QA-team library; those cases' standalone
-  // detail page isn't linkable from a POD yet (Phase 2), so show the header as
-  // plain text instead of a link.
-  sharedLibrary?: boolean;
+  // The project a case's detail page lives in — the shared QA-team source for a
+  // POD, or this project itself. Case links point here so they resolve.
+  caseProjectId?: string;
 }) {
   const [execs, setExecs] = useState<PlayerExec[]>(data.executions);
   const [idx, setIdx] = useState(0);
@@ -808,31 +807,20 @@ export function TestPlayer({
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <h2 className="text-lg font-semibold text-fg">
-                    {sharedLibrary ? (
-                      <>
-                        {cur.caseKey && (
-                          <span className="font-mono text-sm text-ring">
-                            {cur.caseKey}
-                          </span>
-                        )}{" "}
-                        {cur.caseTitle}
-                      </>
-                    ) : (
-                      <Link
-                        href={`/projects/${projectId}/cases/${cur.caseKey ?? cur.caseId}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        title="Open test case details in a new tab"
-                        className="hover:underline"
-                      >
-                        {cur.caseKey && (
-                          <span className="font-mono text-sm text-ring">
-                            {cur.caseKey}
-                          </span>
-                        )}{" "}
-                        {cur.caseTitle}
-                      </Link>
-                    )}
+                    <Link
+                      href={`/projects/${caseProjectId ?? projectId}/cases/${cur.caseKey ?? cur.caseId}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Open test case details in a new tab"
+                      className="hover:underline"
+                    >
+                      {cur.caseKey && (
+                        <span className="font-mono text-sm text-ring">
+                          {cur.caseKey}
+                        </span>
+                      )}{" "}
+                      {cur.caseTitle}
+                    </Link>
                   </h2>
                   <p className="mt-0.5 text-xs text-subtle">
                     Est. {fmtEst(cur.caseEstimatedTime)} · executed by{" "}

@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth";
 import type { Step } from "@/lib/validation";
-import { usesSharedLibrary } from "@/lib/case-source";
+import { caseSourceProjectId } from "@/lib/case-source";
 import { TestPlayer, type PlayerData } from "./test-player";
 
 export default async function PlayerPage({
@@ -111,7 +111,7 @@ export default async function PlayerPage({
           currentUserId={user.id}
           currentUserName={user.name ?? user.email}
           defaultJiraProjectKey={project?.keyPrefix ?? null}
-          sharedLibrary={usesSharedLibrary(projectId)}
+          caseProjectId={caseSourceProjectId(projectId)}
         />
       </Suspense>
     </div>

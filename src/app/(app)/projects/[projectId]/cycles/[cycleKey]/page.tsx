@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth";
 import { suiteCaseCounts } from "@/lib/cases-query";
-import { caseSourceProjectId, usesSharedLibrary } from "@/lib/case-source";
+import { caseSourceProjectId } from "@/lib/case-source";
 import { CycleDetail, type CycleData } from "./cycle-detail";
 
 export default async function CycleRunPage({
@@ -115,7 +115,7 @@ export default async function CycleRunPage({
         initial={data}
         currentUserId={user.id}
         currentUserName={user.name ?? user.email}
-        sharedLibrary={usesSharedLibrary(projectId)}
+        caseProjectId={caseSourceProjectId(projectId)}
       />
     </div>
   );

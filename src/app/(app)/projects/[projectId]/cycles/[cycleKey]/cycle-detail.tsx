@@ -256,16 +256,15 @@ export function CycleDetail({
   initial,
   currentUserId,
   currentUserName,
-  sharedLibrary = false,
+  caseProjectId,
 }: {
   projectId: string;
   initial: CycleData;
   currentUserId: string;
   currentUserName: string;
-  // POD projects draw cases from the shared QA-team library. Those cases live
-  // in another project, so their standalone detail page isn't linkable from
-  // here yet (Phase 2) — show the key/title as plain text instead of a link.
-  sharedLibrary?: boolean;
+  // The project a case's detail page lives in — the shared QA-team source for a
+  // POD, or this project itself. Case links point here so they resolve.
+  caseProjectId?: string;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("Details");
@@ -653,30 +652,20 @@ export function CycleDetail({
                           <PriorityFlag priority={e.casePriority} />
                         </td>
                         <td className="whitespace-nowrap px-3 py-1.5">
-                          {sharedLibrary ? (
-                            <span className="font-mono text-xs text-muted">
-                              {e.caseKey ?? "—"}
-                            </span>
-                          ) : (
-                            <Link
-                              href={`/projects/${projectId}/cases/${e.caseKey ?? e.caseId}?returnTo=${caseReturnTo}`}
-                              className="font-mono text-xs text-ring hover:underline"
-                            >
-                              {e.caseKey ?? "—"}
-                            </Link>
-                          )}
+                          <Link
+                            href={`/projects/${caseProjectId ?? projectId}/cases/${e.caseKey ?? e.caseId}?returnTo=${caseReturnTo}`}
+                            className="font-mono text-xs text-ring hover:underline"
+                          >
+                            {e.caseKey ?? "—"}
+                          </Link>
                         </td>
                         <td className="px-2 py-1.5">
-                          {sharedLibrary ? (
-                            <span className="text-fg">{e.caseTitle}</span>
-                          ) : (
-                            <Link
-                              href={`/projects/${projectId}/cases/${e.caseKey ?? e.caseId}?returnTo=${caseReturnTo}`}
-                              className="text-fg hover:text-ring hover:underline"
-                            >
-                              {e.caseTitle}
-                            </Link>
-                          )}
+                          <Link
+                            href={`/projects/${caseProjectId ?? projectId}/cases/${e.caseKey ?? e.caseId}?returnTo=${caseReturnTo}`}
+                            className="text-fg hover:text-ring hover:underline"
+                          >
+                            {e.caseTitle}
+                          </Link>
                         </td>
                         <td className="px-2 py-1.5">
                           <AssigneeCell
