@@ -509,10 +509,24 @@ export function TestPlayer({
       status: results[stepIndex]?.status === status ? "" : status,
       actual: results[stepIndex]?.actual,
     };
-    patchExec(execId, {
+    // Evidence gate (mirrors the server): marking every step Pass must not
+    // silently pass the case without evidence. Keep the steps, but hold the
+    // case at "in progress" and prompt — instead of sending a Pass the server
+    // would only reject.
+    const derived = deriveStatus(e.caseSteps, results);
+    const evidence = hasEvidence({
+      attachments: e.attachments,
       stepResults: results,
-      status: deriveStatus(e.caseSteps, results),
     });
+    if (derived === "pass" && !evidence) {
+      patchExec(execId, { stepResults: results, status: "in_progress" });
+      setActionError(
+        "Add evidence (an attachment or an image in the actual result) before marking this case as Passed."
+      );
+      return;
+    }
+    if (derived === "pass") setActionError(null);
+    patchExec(execId, { stepResults: results, status: derived });
   }
 
   function setStepActual(execId: string, stepIndex: number, html: string) {
