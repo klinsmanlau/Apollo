@@ -11,6 +11,7 @@ import {
 } from "@/lib/auth";
 import { caseSchema, type Step } from "@/lib/validation";
 import { nextCaseKey, parseKey } from "@/lib/keys";
+import { writeCaseVersionFromCase } from "@/lib/case-versions-db";
 import type { Prisma } from "@prisma/client";
 
 export type FormState = { error?: string } | undefined;
@@ -102,13 +103,22 @@ export async function createCase(
   if (!suite) return { error: "Folder not found" };
 
   const key = await nextCaseKey(projectId);
-  await prisma.testCase.create({
+  const created = await prisma.testCase.create({
     data: {
       ...toCaseData(parsed.data),
       key,
       keyNum: parseKey(key)?.num ?? null,
       createdById: user.id,
     },
+    select: { id: true },
+  });
+
+  // Seed version 1 so every case has a history baseline from creation.
+  await writeCaseVersionFromCase(created.id, {
+    source: "manual",
+    note: "Initial version",
+    userId: user.id,
+    dedupe: false,
   });
 
   revalidatePath(`/projects/${projectId}`);

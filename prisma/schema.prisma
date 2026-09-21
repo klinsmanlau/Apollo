@@ -38,6 +38,7 @@ model User {
   attachments    Attachment[]    @relation("UploadedBy")
   assignedExecutions TestExecution[] @relation("AssignedTo")
   linkedIssuesCreated LinkedIssue[]  @relation("LinkedIssueCreatedBy")
+  caseVersions   TestCaseVersion[] @relation("CaseVersionCreatedBy")
 
   @@index([email])
 }
@@ -173,6 +174,10 @@ model TestCase {
   // Lossless bag for source custom fields (Language, POD, Remarks, etc.).
   customFields   Json       @default("{}")
 
+  // The version number the current (mutable) content represents. Frozen
+  // snapshots live in TestCaseVersion; explicit "Create new version" bumps this.
+  currentVersionNo Int      @default(1)
+
   createdById    String?
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
@@ -181,12 +186,43 @@ model TestCase {
   createdBy   User?           @relation("CaseCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   executions  TestExecution[]
   attachmentFiles Attachment[]
+  versions    TestCaseVersion[]
 
   @@index([suiteId])
   @@index([tags])
   @@index([status])
   @@index([archived])
   @@index([keyNum])
+}
+
+// Immutable snapshot of a test case's authored content at an explicit save
+// point ("Create new version"). The live TestCase is the mutable working head;
+// these rows are the frozen history for auditing, diff, and restore. `snapshot`
+// holds only authored fields (title, steps, priority, …) — not identity (key,
+// sourceKey), location (suiteId), or lifecycle (archived) columns.
+model TestCaseVersion {
+  id          String   @id @default(cuid())
+  caseId      String
+  versionNo   Int
+  snapshot    Json
+  source      CaseVersionSource @default(manual)
+  // Human note, e.g. "Restored from v2" or an import batch label.
+  note        String?
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  case      TestCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  createdBy User?    @relation("CaseVersionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  // One row per (case, versionNo); newest-first history by time.
+  @@unique([caseId, versionNo])
+  @@index([caseId, createdAt])
+}
+
+enum CaseVersionSource {
+  manual  // explicit "Create new version" in the UI
+  import  // captured during a Zephyr sync
+  restore // created by restoring an earlier version
 }
 
 // ---------------------------------------------------------------------------

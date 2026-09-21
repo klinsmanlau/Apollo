@@ -4,13 +4,16 @@ import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { autosaveCase, deleteCase } from "@/lib/actions/cases";
+import { createCaseVersion, restoreCaseVersion } from "@/lib/actions/case-versions";
 import { Modal } from "@/components/modal";
 import { SelectField, opts, type Opt } from "@/components/select-field";
 import { StatusBadge } from "@/components/ui";
 import { CUSTOM_FIELDS } from "@/lib/custom-fields";
 import type { Step } from "@/lib/validation";
+import { buildSnapshot, type CaseSnapshot } from "@/lib/case-versions";
 import type { ExecutionStatus } from "@prisma/client";
 import { ArrowLeft, ChevronDown, ChevronRight, X } from "@/components/icons";
+import { CaseHistory } from "./case-history";
 
 export type CaseUser = { id: string; name: string | null; email: string };
 
@@ -53,6 +56,16 @@ export type CaseExecRow = {
   cycleId: string;
   cycleKey: string | null;
   cycleName: string;
+};
+
+// One frozen version in the case's history (newest first from the server).
+export type CaseVersionRow = {
+  versionNo: number;
+  source: "manual" | "import" | "restore";
+  note: string | null;
+  authorName: string | null;
+  createdAt: string;
+  snapshot: CaseSnapshot;
 };
 
 const STATUS_OPTS: Opt[] = [
@@ -168,6 +181,9 @@ export function CaseDetail({
   suiteOptions,
   users,
   executions,
+  versions,
+  headSnapshot,
+  currentVersionNo,
   returnTo,
 }: {
   projectId: string;
@@ -175,6 +191,9 @@ export function CaseDetail({
   suiteOptions: Opt[];
   users: CaseUser[];
   executions: CaseExecRow[];
+  versions: CaseVersionRow[];
+  headSnapshot: CaseSnapshot;
+  currentVersionNo: number;
   /** Set when this page was opened from a test cycle's case list — shows a
    *  "Go Back" button that returns there instead of to the case's folder. */
   returnTo?: string | null;
@@ -186,7 +205,83 @@ export function CaseDetail({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stepsRef = useRef<HTMLDivElement>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [versionBusy, setVersionBusy] = useState(false);
+  const [versionMsg, setVersionMsg] = useState<string | null>(null);
   const router = useRouter();
+
+  // The live working head as a snapshot: head-only fields (type, expectedResult)
+  // come from the server; everything the editors touch comes from local state.
+  const currentSnapshot: CaseSnapshot = buildSnapshot({
+    ...headSnapshot,
+    title: c.title,
+    objective: c.objective,
+    preconditions: c.preconditions,
+    scriptType: c.scriptType,
+    steps: c.steps,
+    scriptBody: c.scriptBody,
+    priority: c.priority,
+    status: c.status,
+    component: c.component,
+    ownerName: c.ownerName,
+    estimatedTime: c.estimatedTime,
+    tags: c.tags,
+    coverage: c.coverage,
+    externalRef: c.externalRef,
+    customFields: c.customFields,
+  });
+
+  async function handleCreateVersion(note: string) {
+    setVersionBusy(true);
+    setVersionMsg(null);
+    await flush(); // make sure the head is saved before we freeze it
+    const res = await createCaseVersion(c.id, note);
+    if ("error" in res) setVersionMsg(res.error);
+    else
+      setVersionMsg(
+        res.created
+          ? `Saved as v${res.versionNo}.`
+          : `No changes since v${res.versionNo}.`
+      );
+    setVersionBusy(false);
+    router.refresh();
+  }
+
+  async function handleRestore(versionNo: number) {
+    setVersionBusy(true);
+    setVersionMsg(null);
+    await flush();
+    // Reflect the restored content in the editors immediately (state is seeded
+    // once, so a router.refresh alone wouldn't update the open fields).
+    const target = versions.find((v) => v.versionNo === versionNo);
+    if (target) {
+      const s = target.snapshot;
+      const custom: Record<string, string> = {};
+      for (const [k, v] of Object.entries(s.customFields ?? {})) custom[k] = String(v ?? "");
+      setC((p) => ({
+        ...p,
+        title: s.title,
+        objective: s.objective,
+        preconditions: s.preconditions,
+        scriptType: s.scriptType as CaseData["scriptType"],
+        steps: s.steps,
+        scriptBody: s.scriptBody,
+        priority: s.priority,
+        status: s.status,
+        component: s.component,
+        ownerName: s.ownerName,
+        estimatedTime: s.estimatedTime,
+        tags: s.tags,
+        coverage: s.coverage,
+        externalRef: s.externalRef,
+        customFields: custom,
+      }));
+    }
+    const res = await restoreCaseVersion(c.id, versionNo);
+    if ("error" in res) setVersionMsg(res.error);
+    else setVersionMsg(`Restored — now v${res.versionNo}.`);
+    setVersionBusy(false);
+    router.refresh();
+  }
   // Return to the exact screen the user came from (its tab + scroll are restored
   // by a real history back). Flush pending autosaves first so no edits are lost.
   // Falls back to an explicit returnTo, then the project, when there's no history.
@@ -295,9 +390,16 @@ export function CaseDetail({
                 {c.title || "Untitled test case"}
               </span>
             </nav>
-            {c.key && (
-              <p className="mt-1 font-mono text-xs text-subtle">{c.key}</p>
-            )}
+            <p className="mt-1 flex items-center gap-2 font-mono text-xs text-subtle">
+              {c.key && <span>{c.key}</span>}
+              <button
+                onClick={() => setTab("History")}
+                title="View version history"
+                className="rounded bg-surface-muted px-1.5 py-0.5 font-sans text-[10px] font-medium text-muted transition-colors hover:text-fg"
+              >
+                v{currentVersionNo}
+              </button>
+            </p>
             <h1 className="mt-1 text-2xl font-bold tracking-tight text-fg">
               {c.title || "Untitled test case"}
             </h1>
@@ -770,10 +872,23 @@ export function CaseDetail({
             </div>
           ))}
 
-        {(tab === "Traceability" || tab === "History") && (
+        {tab === "Traceability" && (
           <div className="flex h-full items-center justify-center py-16 text-sm text-subtle">
-            {tab} — coming in a later phase.
+            Traceability — coming in a later phase.
           </div>
+        )}
+
+        {tab === "History" && (
+          <CaseHistory
+            versions={versions}
+            current={currentSnapshot}
+            currentVersionNo={currentVersionNo}
+            canRestore
+            busy={versionBusy}
+            message={versionMsg}
+            onCreateVersion={handleCreateVersion}
+            onRestore={handleRestore}
+          />
         )}
       </div>
 

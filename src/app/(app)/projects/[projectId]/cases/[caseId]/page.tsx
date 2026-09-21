@@ -3,7 +3,13 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth";
 import { buildSuiteTree, flattenForSelect } from "@/lib/suites";
 import type { Step } from "@/lib/validation";
-import { CaseDetail, type CaseData, type CaseExecRow } from "./case-detail";
+import { buildSnapshot, type CaseSnapshot } from "@/lib/case-versions";
+import {
+  CaseDetail,
+  type CaseData,
+  type CaseExecRow,
+  type CaseVersionRow,
+} from "./case-detail";
 
 export default async function CasePage({
   params,
@@ -26,7 +32,14 @@ export default async function CasePage({
         suite: { projectId, project: { members: { some: { userId: user.id } } } },
         OR: [{ key: caseId }, { id: caseId }],
       },
-      include: { createdBy: true },
+      include: {
+        createdBy: true,
+        versions: {
+          orderBy: { versionNo: "desc" },
+          take: 100,
+          include: { createdBy: { select: { name: true, email: true } } },
+        },
+      },
     }),
     prisma.testSuite.findMany({ where: { projectId } }),
     prisma.projectMember.findMany({
@@ -74,6 +87,19 @@ export default async function CasePage({
     cycleName: e.run.name,
   }));
 
+  const versions: CaseVersionRow[] = testCase.versions.map((v) => ({
+    versionNo: v.versionNo,
+    source: v.source,
+    note: v.note,
+    authorName: v.createdBy?.name ?? v.createdBy?.email ?? null,
+    createdAt: v.createdAt.toISOString(),
+    snapshot: buildSnapshot(v.snapshot as Record<string, unknown>),
+  }));
+  // The live saved head, so the History tab can diff a version against "current".
+  const headSnapshot: CaseSnapshot = buildSnapshot(
+    testCase as unknown as Record<string, unknown>
+  );
+
   const suiteOptions = flattenForSelect(buildSuiteTree(suites)).map((o) => ({
     value: o.id,
     label: o.label,
@@ -115,6 +141,9 @@ export default async function CasePage({
         suiteOptions={suiteOptions}
         users={users}
         executions={execRows}
+        versions={versions}
+        headSnapshot={headSnapshot}
+        currentVersionNo={testCase.currentVersionNo}
         returnTo={safeReturnTo}
       />
     </div>
