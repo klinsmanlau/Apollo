@@ -621,7 +621,7 @@ export function CycleDetail({
               </div>
             ) : (
               <div className="overflow-hidden rounded-lg border border-line">
-                <table className="w-full text-sm">
+                <table className="w-full table-fixed text-sm">
                   <thead className="sticky top-0 bg-surface-muted text-[11px] uppercase tracking-wide text-subtle">
                     <tr>
                       <th className="w-8 px-2 py-1.5 text-left">
@@ -632,10 +632,10 @@ export function CycleDetail({
                         />
                       </th>
                       <th className="w-8 px-2 py-1.5 text-left font-semibold">P</th>
-                      <th className="px-3 py-1.5 text-left font-semibold">Key</th>
+                      <th className="w-28 px-3 py-1.5 text-left font-semibold">Key</th>
                       <th className="px-2 py-1.5 text-left font-semibold">Test case</th>
-                      <th className="px-2 py-1.5 text-left font-semibold">Assigned to</th>
-                      <th className="px-2 py-1.5 text-left font-semibold">Executed by</th>
+                      <th className="w-44 px-2 py-1.5 text-left font-semibold">Assigned to</th>
+                      <th className="w-40 px-2 py-1.5 text-left font-semibold">Executed by</th>
                       <th className="w-8" />
                     </tr>
                   </thead>
@@ -663,7 +663,8 @@ export function CycleDetail({
                         <td className="px-2 py-1.5">
                           <Link
                             href={`/projects/${caseProjectId ?? projectId}/cases/${e.caseKey ?? e.caseId}?returnTo=${caseReturnTo}`}
-                            className="text-fg hover:text-ring hover:underline"
+                            title={e.caseTitle}
+                            className="block truncate text-fg hover:text-ring hover:underline"
                           >
                             {e.caseTitle}
                           </Link>
@@ -676,7 +677,7 @@ export function CycleDetail({
                             onChange={(id, name) => setAssignee(e.id, id, name)}
                           />
                         </td>
-                        <td className="whitespace-nowrap px-2 py-1 text-xs text-subtle">
+                        <td className="truncate px-2 py-1 text-xs text-subtle" title={e.executedByName ?? undefined}>
                           {e.executedByName ?? "—"}
                         </td>
                         <td className="px-2 py-1.5">
