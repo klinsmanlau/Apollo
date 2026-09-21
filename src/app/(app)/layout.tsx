@@ -18,7 +18,7 @@ export default async function AppLayout({
         <div className="flex h-16 items-center justify-between px-6">
           <div className="flex items-center gap-7">
             <Link
-              href="/projects/rytbank-qa-team"
+              href="/projects"
               className="rounded-md transition-opacity hover:opacity-80"
             >
               <Logo />
