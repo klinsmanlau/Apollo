@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { nextCycleKey, parseKey } from "@/lib/keys";
 import { caseSourceProjectId } from "@/lib/case-source";
+import { executionPinFromCase } from "@/lib/case-versions-db";
 import { fetchZephyrCycles } from "./zephyr-cycles-api";
 import type { ExecutionStatus, Prisma } from "@prisma/client";
 
@@ -90,14 +91,22 @@ export async function syncCyclesFromZephyr(opts: {
   // so its executions link to the shared cases; for the source project itself
   // it's its own cases.
   const idByKey = new Map<string, string>();
+  // caseId → version pin (frozen snapshot) stamped on each synced execution.
+  const pinByCaseId = new Map<
+    string,
+    ReturnType<typeof executionPinFromCase>
+  >();
   {
     const all = await prisma.testCase.findMany({
       where: { suite: { projectId: caseSourceProjectId(opts.projectId) } },
-      select: { id: true, key: true, sourceKey: true },
     });
     for (const c of all) {
       if (c.sourceKey) idByKey.set(c.sourceKey, c.id);
       if (c.key) idByKey.set(c.key, c.id);
+      pinByCaseId.set(
+        c.id,
+        executionPinFromCase(c as unknown as Record<string, unknown> & { currentVersionNo?: number })
+      );
     }
   }
 
@@ -193,6 +202,7 @@ export async function syncCyclesFromZephyr(opts: {
           notes: e.notes,
           defectRef: e.defectRef,
           executedAt: e.executedAt,
+          ...(pinByCaseId.get(e.caseId) ?? {}),
         })) as Prisma.TestExecutionCreateManyInput[],
         skipDuplicates: true,
       });

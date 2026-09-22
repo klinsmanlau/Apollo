@@ -11,6 +11,20 @@ import { buildSnapshot, snapshotsEqual } from "@/lib/case-versions";
 type Db = PrismaClient | Prisma.TransactionClient;
 
 /**
+ * Build the version pin stamped on a new execution: the case's current version
+ * number plus a frozen snapshot of its authored content. Pass a case row that
+ * includes `currentVersionNo` and the authored fields.
+ */
+export function executionPinFromCase(
+  c: Record<string, unknown> & { currentVersionNo?: number }
+): { caseVersionNo: number | null; caseSnapshot: Prisma.InputJsonValue } {
+  return {
+    caseVersionNo: typeof c.currentVersionNo === "number" ? c.currentVersionNo : null,
+    caseSnapshot: buildSnapshot(c) as unknown as Prisma.InputJsonValue,
+  };
+}
+
+/**
  * Freeze the case's current authored content as a new version, bumping
  * `currentVersionNo`. When `dedupe` is set, a no-op is returned if the content
  * is identical to the latest version (Zephyr's "won't increment if unchanged").

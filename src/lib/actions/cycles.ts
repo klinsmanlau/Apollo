@@ -10,6 +10,7 @@ import {
 } from "@/lib/auth";
 import { nextCycleKey, parseKey } from "@/lib/keys";
 import { caseSourceProjectId } from "@/lib/case-source";
+import { executionPinFromCase } from "@/lib/case-versions-db";
 import type { ExecutionStatus, CycleStatus, Prisma } from "@prisma/client";
 
 // ---- Cycles ---------------------------------------------------------------
@@ -272,13 +273,13 @@ export async function addCasesToCycle(cycleId: string, caseIds: string[]) {
   if (caseIds.length === 0) return { added: 0 };
 
   // Only link cases from this project's case library — its own cases, or (for a
-  // POD) the shared QA-team source project it draws from.
+  // POD) the shared QA-team source project it draws from. Full rows so each
+  // execution can be pinned to a frozen snapshot of the case content.
   const valid = await prisma.testCase.findMany({
     where: {
       id: { in: caseIds },
       suite: { projectId: caseSourceProjectId(run.projectId) },
     },
-    select: { id: true },
   });
 
   const res = await prisma.testExecution.createMany({
@@ -286,6 +287,9 @@ export async function addCasesToCycle(cycleId: string, caseIds: string[]) {
       runId: cycleId,
       caseId: c.id,
       status: "not_executed" as ExecutionStatus,
+      ...executionPinFromCase(
+        c as unknown as Record<string, unknown> & { currentVersionNo?: number }
+      ),
     })),
     skipDuplicates: true,
   });

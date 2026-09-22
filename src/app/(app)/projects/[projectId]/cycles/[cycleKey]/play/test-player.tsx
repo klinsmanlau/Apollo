@@ -65,6 +65,7 @@ export type PlayerExec = {
   executedByName: string | null;
   caseId: string;
   caseKey: string | null;
+  caseVersionNo: number | null;
   caseTitle: string;
   casePriority: Priority;
   caseComponent: string | null;
@@ -948,6 +949,17 @@ export function TestPlayer({
                     </Link>
                   </h2>
                   <p className="mt-0.5 text-xs text-subtle">
+                    {cur.caseVersionNo != null && (
+                      <>
+                        <span
+                          title="This execution is pinned to this test-case version"
+                          className="font-medium text-muted"
+                        >
+                          v{cur.caseVersionNo}
+                        </span>{" "}
+                        ·{" "}
+                      </>
+                    )}
                     Est. {fmtEst(cur.caseEstimatedTime)} · executed by{" "}
                     {cur.executedByName ?? "—"}
                   </p>

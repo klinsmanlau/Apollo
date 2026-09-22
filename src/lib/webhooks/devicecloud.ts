@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { nextCycleKey, parseKey } from "@/lib/keys";
+import { executionPinFromCase } from "@/lib/case-versions-db";
 import type { ExecutionStatus } from "@prisma/client";
 
 export type DeviceCloudResult = {
@@ -165,13 +166,18 @@ export async function ingestDeviceCloudRun(
           suite: { projectId },
           OR: [{ sourceKey: { in: referencedKeys } }, { key: { in: referencedKeys } }],
         },
-        select: { id: true, key: true, sourceKey: true },
       })
     : [];
   const caseIdByKey = new Map<string, string>();
+  // caseId → version pin (frozen snapshot) stamped on each execution row.
+  const pinByCaseId = new Map<string, ReturnType<typeof executionPinFromCase>>();
   for (const c of matched) {
     if (c.key) caseIdByKey.set(c.key, c.id);
     if (c.sourceKey) caseIdByKey.set(c.sourceKey, c.id);
+    pinByCaseId.set(
+      c.id,
+      executionPinFromCase(c as unknown as Record<string, unknown> & { currentVersionNo?: number })
+    );
   }
 
   // 3) Record one execution per (flow × matched case). A flow may map to several
@@ -215,7 +221,10 @@ export async function ingestDeviceCloudRun(
     }
   }
 
-  const executions = [...execByCase.values()];
+  const executions = [...execByCase.values()].map((e) => ({
+    ...e,
+    ...(pinByCaseId.get(e.caseId) ?? {}),
+  }));
   if (executions.length) {
     await prisma.testExecution.createMany({ data: executions, skipDuplicates: true });
   }

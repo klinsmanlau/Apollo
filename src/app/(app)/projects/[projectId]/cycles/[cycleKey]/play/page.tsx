@@ -4,7 +4,9 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth";
 import type { Step } from "@/lib/validation";
+import type { Priority } from "@prisma/client";
 import { caseSourceProjectId } from "@/lib/case-source";
+import { buildSnapshot } from "@/lib/case-versions";
 import { TestPlayer, type PlayerData, VIEW_COOKIE } from "./test-player";
 
 export default async function PlayerPage({
@@ -78,32 +80,43 @@ export default async function PlayerPage({
       endDate: cycle.endDate ? cycle.endDate.toISOString().slice(0, 10) : "",
     },
     users: members.map((m) => m.user),
-    executions: cycle.executions.map((e) => ({
-      id: e.id,
-      status: e.status,
-      notes: e.notes,
-      defectRef: e.defectRef,
-      linkedIssues: e.linkedIssues,
-      stepResults: (e.stepResults as unknown as { status: string }[]) ?? [],
-      environment: e.environment,
-      iteration: e.iteration,
-      releaseVersion: e.releaseVersion,
-      assignedToId: e.assignedToId,
-      assignedToName: e.assignedToName,
-      actualTime: e.actualTime,
-      executedByName: e.executedBy?.name ?? e.executedBy?.email ?? null,
-      caseId: e.case.id,
-      caseKey: e.case.key,
-      caseTitle: e.case.title,
-      casePriority: e.case.priority,
-      caseComponent: e.case.component,
-      caseFolder: e.case.suite?.name ?? null,
-      caseObjective: e.case.objective,
-      casePreconditions: e.case.preconditions,
-      caseSteps: (e.case.steps as unknown as Step[]) ?? [],
-      caseEstimatedTime: e.case.estimatedTime,
-      attachments: e.attachmentFiles,
-    })),
+    executions: cycle.executions.map((e) => {
+      // Render against the version this execution was pinned to (frozen at
+      // add-to-cycle time), so its stepResults stay aligned with the exact
+      // steps that were run. Legacy rows with no snapshot use the live case.
+      const pinned = e.caseSnapshot
+        ? buildSnapshot(e.caseSnapshot as Record<string, unknown>)
+        : null;
+      return {
+        id: e.id,
+        status: e.status,
+        notes: e.notes,
+        defectRef: e.defectRef,
+        linkedIssues: e.linkedIssues,
+        stepResults: (e.stepResults as unknown as { status: string }[]) ?? [],
+        environment: e.environment,
+        iteration: e.iteration,
+        releaseVersion: e.releaseVersion,
+        assignedToId: e.assignedToId,
+        assignedToName: e.assignedToName,
+        actualTime: e.actualTime,
+        executedByName: e.executedBy?.name ?? e.executedBy?.email ?? null,
+        caseId: e.case.id,
+        caseKey: e.case.key,
+        caseVersionNo: e.caseVersionNo,
+        caseTitle: pinned ? pinned.title : e.case.title,
+        casePriority: (pinned ? pinned.priority : e.case.priority) as Priority,
+        caseComponent: pinned ? pinned.component : e.case.component,
+        caseFolder: e.case.suite?.name ?? null,
+        caseObjective: pinned ? pinned.objective : e.case.objective,
+        casePreconditions: pinned ? pinned.preconditions : e.case.preconditions,
+        caseSteps: pinned
+          ? (pinned.steps as Step[])
+          : ((e.case.steps as unknown as Step[]) ?? []),
+        caseEstimatedTime: pinned ? pinned.estimatedTime : e.case.estimatedTime,
+        attachments: e.attachmentFiles,
+      };
+    }),
   };
 
   return (

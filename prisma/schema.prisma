@@ -309,6 +309,13 @@ model TestExecution {
   attachments    String[]        @default([])
   // Per-step results (parallel to the case's steps): [{ status, at }].
   stepResults    Json            @default("[]")
+  // Case content this execution was created against, frozen at add-to-cycle
+  // time. Keeps stepResults aligned with the exact steps that were run even
+  // after the shared case is later edited. `caseVersionNo` is the case's
+  // version number in effect then (for display/reporting). Both null on legacy
+  // rows created before Phase 2 — those fall back to the live case content.
+  caseVersionNo  Int?
+  caseSnapshot   Json?
   // Test Player execution details.
   environment    String?
   iteration      String?
