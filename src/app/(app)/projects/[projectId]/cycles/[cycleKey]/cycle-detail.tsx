@@ -744,14 +744,14 @@ export function CycleDetail({
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[720px] text-sm">
-                <thead className="border-b border-line text-[11px] uppercase tracking-wide text-subtle">
+              <table className="w-full min-w-[640px] text-xs">
+                <thead className="border-b border-line text-[10px] uppercase tracking-wide text-subtle">
                   <tr>
-                    <th className="py-2 pr-4 text-left font-semibold">Changed By</th>
-                    <th className="py-2 pr-4 text-left font-semibold">Date</th>
-                    <th className="py-2 pr-4 text-left font-semibold">Field</th>
-                    <th className="py-2 pr-4 text-left font-semibold">Original Value</th>
-                    <th className="py-2 text-left font-semibold">New Value</th>
+                    <th className="py-1 pr-3 text-left font-semibold">Changed By</th>
+                    <th className="py-1 pr-3 text-left font-semibold">Date</th>
+                    <th className="py-1 pr-3 text-left font-semibold">Field</th>
+                    <th className="py-1 pr-3 text-left font-semibold">Original Value</th>
+                    <th className="py-1 text-left font-semibold">New Value</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -759,19 +759,19 @@ export function CycleDetail({
                     const isCreated = ch.field === "__created__";
                     return (
                       <tr key={ch.id} className="border-b border-line/60 align-top">
-                        <td className="whitespace-nowrap py-2 pr-4 text-fg">
+                        <td className="whitespace-nowrap py-1 pr-3 text-fg">
                           {ch.changedByName}
                         </td>
-                        <td className="whitespace-nowrap py-2 pr-4 text-muted">
+                        <td className="whitespace-nowrap py-1 pr-3 text-muted">
                           {fmtHistoryDate(ch.createdAt)}
                         </td>
-                        <td className="whitespace-nowrap py-2 pr-4 text-muted">
+                        <td className="whitespace-nowrap py-1 pr-3 text-muted">
                           {ch.label}
                         </td>
-                        <td className="whitespace-pre-line py-2 pr-4 text-muted">
+                        <td className="whitespace-pre-line py-1 pr-3 text-muted">
                           {isCreated ? "" : ch.oldValue ?? "—"}
                         </td>
-                        <td className="whitespace-pre-line py-2 text-muted">
+                        <td className="whitespace-pre-line py-1 text-muted">
                           {isCreated ? "" : ch.newValue ?? "—"}
                         </td>
                       </tr>
