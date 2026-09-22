@@ -63,40 +63,42 @@ export function RichTextEditor({
   // The caret position at the moment the image tool is clicked — restored after
   // the (blurring) file dialog closes so the image lands where the user was.
   const savedRange = useRef<Range | null>(null);
-  // The image currently showing resize handles, plus its box (relative to the
-  // wrapper) so the selection outline can be drawn over it.
-  const selImg = useRef<HTMLImageElement | null>(null);
-  const [imgBox, setImgBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  // The media element (image or video) currently showing resize handles, plus
+  // its box (relative to the wrapper) so the selection outline can be drawn
+  // over it. Images and videos resize identically — both take an inline
+  // width/height and report their rendered size via getBoundingClientRect.
+  const selEl = useRef<HTMLImageElement | HTMLVideoElement | null>(null);
+  const [selBox, setSelBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [focused, setFocused] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [imgError, setImgError] = useState<string | null>(null);
   const [empty, setEmpty] = useState(!value || value === "<br>");
 
-  // Position the resize outline over the selected image, or clear it.
-  function measureImage() {
-    const img = selImg.current;
+  // Position the resize outline over the selected media, or clear it.
+  function measureMedia() {
+    const el = selEl.current;
     const wrap = wrapRef.current;
-    if (!img || !wrap || !wrap.contains(img)) {
-      selImg.current = null;
-      setImgBox(null);
+    if (!el || !wrap || !wrap.contains(el)) {
+      selEl.current = null;
+      setSelBox(null);
       return;
     }
-    const ir = img.getBoundingClientRect();
+    const ir = el.getBoundingClientRect();
     const wr = wrap.getBoundingClientRect();
-    setImgBox({ x: ir.left - wr.left, y: ir.top - wr.top, w: ir.width, h: ir.height });
+    setSelBox({ x: ir.left - wr.left, y: ir.top - wr.top, w: ir.width, h: ir.height });
   }
 
-  function selectImage(img: HTMLImageElement | null) {
-    selImg.current = img;
-    measureImage();
+  function selectMedia(el: HTMLImageElement | HTMLVideoElement | null) {
+    selEl.current = el;
+    measureMedia();
   }
 
-  // Drag the bottom-right handle to resize the image, preserving aspect ratio.
+  // Drag the bottom-right handle to resize the media, preserving aspect ratio.
   function startResize(e: React.PointerEvent) {
     e.preventDefault();
-    const img = selImg.current;
-    if (!img) return;
-    const rect = img.getBoundingClientRect();
+    const el = selEl.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
     const startX = e.clientX;
     const startW = rect.width;
     const ratio = rect.height / rect.width || 1;
@@ -104,9 +106,9 @@ export function RichTextEditor({
 
     const move = (ev: PointerEvent) => {
       const w = Math.round(Math.min(maxW, Math.max(40, startW + (ev.clientX - startX))));
-      img.style.width = `${w}px`;
-      img.style.height = `${Math.round(w * ratio)}px`;
-      measureImage();
+      el.style.width = `${w}px`;
+      el.style.height = `${Math.round(w * ratio)}px`;
+      measureMedia();
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
@@ -372,26 +374,30 @@ export function RichTextEditor({
           onFocus={() => setFocused(true)}
           onBlur={() => {
             setFocused(false);
-            selectImage(null);
+            selectMedia(null);
             if (ref.current) onChange(isBlank(ref.current) ? "" : ref.current.innerHTML);
           }}
           onInput={() => {
             sync();
             setImgError(null);
-            measureImage(); // keep the outline aligned as content reflows
+            measureMedia(); // keep the outline aligned as content reflows
           }}
           onClick={(e) => {
             const t = e.target as HTMLElement;
-            selectImage(t.tagName === "IMG" ? (t as HTMLImageElement) : null);
+            selectMedia(
+              t.tagName === "IMG" || t.tagName === "VIDEO"
+                ? (t as HTMLImageElement | HTMLVideoElement)
+                : null
+            );
           }}
           onPaste={onPaste}
           style={{ minHeight }}
           className="prose-actual w-full px-3 py-2 text-sm text-fg outline-none"
         />
-        {imgBox && (
+        {selBox && (
           <div
             className="pointer-events-none absolute z-20 rounded-sm ring-2 ring-ring"
-            style={{ left: imgBox.x, top: imgBox.y, width: imgBox.w, height: imgBox.h }}
+            style={{ left: selBox.x, top: selBox.y, width: selBox.w, height: selBox.h }}
           >
             <span
               // Keep focus/selection in the editor so the outline survives the drag.
