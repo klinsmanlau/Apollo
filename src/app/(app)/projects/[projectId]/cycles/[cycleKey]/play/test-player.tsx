@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { compressImage } from "@/lib/compress-image";
 import { PriorityBadge } from "@/components/ui";
 import { SelectField, type Opt } from "@/components/select-field";
@@ -9,7 +10,7 @@ import { recordExecution } from "@/lib/actions/cycles";
 import { EXEC_STATUS_META, execMeta } from "@/lib/exec-status";
 import type { Priority, ExecutionStatus } from "@prisma/client";
 import type { Step } from "@/lib/validation";
-import { ArrowLeft, Ban, Check, ChevronDown, ChevronRight, Flag, Pause, Play, X } from "@/components/icons";
+import { ArrowLeft, Ban, Check, ChevronDown, ChevronRight, Flag, Pause, Play, Plus, X } from "@/components/icons";
 import { RichTextEditor, fileToDataUrl } from "@/components/rich-text-editor";
 
 type StepResult = { status: string; actual?: string };
@@ -306,31 +307,60 @@ function AttachmentsSection({
               </button>
             </li>
           ))}
+          {/* Once there are attachments, adding more is a compact tile that
+              sits inline with the thumbnails (still click / drop / paste). */}
+          <li>
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOver(false);
+                upload(Array.from(e.dataTransfer.files));
+              }}
+              title="Add attachment"
+              aria-label="Add attachment"
+              className={`flex h-20 w-20 items-center justify-center rounded-md border border-dashed transition-colors ${
+                dragOver
+                  ? "border-ring bg-primary/5 text-fg"
+                  : "border-line text-subtle hover:border-ring hover:text-fg"
+              }`}
+            >
+              {busy ? <span className="text-[11px]">…</span> : <Plus size={20} />}
+            </button>
+          </li>
         </ul>
       )}
 
-      <div
-        onClick={() => inputRef.current?.click()}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragOver(false);
-          upload(Array.from(e.dataTransfer.files));
-        }}
-        className={`cursor-pointer rounded-lg border border-dashed py-5 text-center text-sm transition-colors ${
-          dragOver
-            ? "border-ring bg-primary/5 text-fg"
-            : "border-line text-subtle hover:border-ring hover:text-fg"
-        }`}
-      >
-        {busy
-          ? "Uploading…"
-          : "Drop files to attach or browse (10 MB max)"}
-      </div>
+      {items.length === 0 && (
+        <div
+          onClick={() => inputRef.current?.click()}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+            upload(Array.from(e.dataTransfer.files));
+          }}
+          className={`cursor-pointer rounded-lg border border-dashed py-5 text-center text-sm transition-colors ${
+            dragOver
+              ? "border-ring bg-primary/5 text-fg"
+              : "border-line text-subtle hover:border-ring hover:text-fg"
+          }`}
+        >
+          {busy
+            ? "Uploading…"
+            : "Drop files to attach or browse (10 MB max)"}
+        </div>
+      )}
       {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
 
       {preview && (
@@ -536,15 +566,23 @@ export function TestPlayer({
   initialGroupBy?: string | null;
   initialAssignedToMe?: boolean;
 }) {
+  const searchParams = useSearchParams();
   const [execs, setExecs] = useState<PlayerExec[]>(data.executions);
-  const [idx, setIdx] = useState(0);
+  // Seed the selected case from ?exec= so a refresh (or shared link) keeps the
+  // case the user was on instead of snapping back to the first.
+  const initialIdx = (() => {
+    const id = searchParams.get("exec");
+    const i = id ? data.executions.findIndex((e) => e.id === id) : -1;
+    return i >= 0 ? i : 0;
+  })();
+  const [idx, setIdx] = useState(initialIdx);
   const [search, setSearch] = useState("");
   const [groupBy, setGroupBy] = useState<GroupBy>(() => coerceGroupBy(initialGroupBy));
   const [groupOpen, setGroupOpen] = useState(false);
   const [assignedToMe, setAssignedToMe] = useState(initialAssignedToMe);
   const [setBelowFor, setSetBelowFor] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
-  const [elapsed, setElapsed] = useState(data.executions[0]?.actualTime ?? 0);
+  const [elapsed, setElapsed] = useState(data.executions[initialIdx]?.actualTime ?? 0);
   // Server-rejected action (e.g. Passing without an attachment).
   const [actionError, setActionError] = useState<string | null>(null);
   const cur = execs[idx];
@@ -614,6 +652,13 @@ export function TestPlayer({
     }
     setIdx(newIdx);
     setElapsed(execs[newIdx]?.actualTime ?? 0);
+    // Persist the selection in the URL (no navigation) so a refresh restores it.
+    const id = execs[newIdx]?.id;
+    if (id && typeof window !== "undefined") {
+      const params = new URLSearchParams(Array.from(searchParams.entries()));
+      params.set("exec", id);
+      window.history.replaceState(null, "", `?${params.toString()}`);
+    }
   }
   function toggleTimer() {
     if (!cur) return;
