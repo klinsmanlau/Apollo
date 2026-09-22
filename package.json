@@ -14,7 +14,8 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
     "zephyr:sync": "tsx prisma/zephyr-sync.ts",
-    "zephyr:sync-cycles": "tsx prisma/zephyr-sync-cycles.ts"
+    "zephyr:sync-cycles": "tsx prisma/zephyr-sync-cycles.ts",
+    "zephyr:update": "bash scripts/sync-zephyr.sh"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
