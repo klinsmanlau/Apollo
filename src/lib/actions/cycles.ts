@@ -12,6 +12,7 @@ import { nextCycleKey, parseKey } from "@/lib/keys";
 import { caseSourceProjectId } from "@/lib/case-source";
 import { executionPinFromCase } from "@/lib/case-versions-db";
 import { computeCycleChanges } from "@/lib/cycle-changes";
+import { deleteFromStorage } from "@/lib/storage";
 import type { ExecutionStatus, CycleStatus, Prisma } from "@prisma/client";
 
 // ---- Cycles ---------------------------------------------------------------
@@ -420,16 +421,46 @@ export async function bulkAssignExecutions(
   return { ok: true, updated: res.count };
 }
 
-/** True if any step's Actual Result HTML embeds an image (counts as evidence). */
-function stepResultsHaveImage(results: unknown): boolean {
+/** True if any step's Actual Result HTML embeds an image or video (evidence). */
+function stepResultsHaveMedia(results: unknown): boolean {
   if (!Array.isArray(results)) return false;
   return results.some(
     (r) =>
       r &&
       typeof r === "object" &&
       typeof (r as { actual?: unknown }).actual === "string" &&
-      /<img\b/i.test((r as { actual: string }).actual)
+      /<(img|video)\b/i.test((r as { actual: string }).actual)
   );
+}
+
+/**
+ * Delete inline media (videos embedded in a step's rich text) that the saved
+ * stepResults no longer reference — so removing a video from the editor frees
+ * its storage object and row. Best-effort; never blocks the save.
+ */
+async function cleanupInlineMedia(executionId: string, stepResults: unknown) {
+  const html = Array.isArray(stepResults)
+    ? stepResults
+        .map((r) =>
+          r && typeof r === "object" && typeof (r as { actual?: unknown }).actual === "string"
+            ? (r as { actual: string }).actual
+            : ""
+        )
+        .join(" ")
+    : "";
+  const referenced = new Set(
+    Array.from(html.matchAll(/\/attachments\/([a-z0-9]+)/gi), (m) => m[1])
+  );
+  const inlineFiles = await prisma.attachment.findMany({
+    where: { executionId, inline: true },
+    select: { id: true, storageKey: true },
+  });
+  const orphans = inlineFiles.filter((a) => !referenced.has(a.id));
+  if (orphans.length === 0) return;
+  await prisma.attachment.deleteMany({
+    where: { id: { in: orphans.map((a) => a.id) } },
+  });
+  await Promise.all(orphans.map((a) => deleteFromStorage(a.storageKey).catch(() => {})));
 }
 
 export async function recordExecution(
@@ -482,7 +513,7 @@ export async function recordExecution(
     // Prefer the incoming stepResults (same save), else what's already stored.
     const results =
       "stepResults" in patch ? patch.stepResults : ex.stepResults;
-    if (!stepResultsHaveImage(results)) {
+    if (!stepResultsHaveMedia(results)) {
       return {
         error:
           "Add evidence (an attachment or an image in the actual result) before marking this case as Passed",
@@ -529,5 +560,10 @@ export async function recordExecution(
     data.actualTime = patch.actualTime == null ? null : Number(patch.actualTime);
 
   await prisma.testExecution.update({ where: { id: executionId }, data });
+
+  // When step results change, drop any inline media no longer referenced.
+  if ("stepResults" in patch) {
+    await cleanupInlineMedia(executionId, patch.stepResults).catch(() => {});
+  }
   return { ok: true };
 }

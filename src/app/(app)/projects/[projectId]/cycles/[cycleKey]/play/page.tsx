@@ -48,6 +48,9 @@ export default async function PlayerPage({
             },
             executedBy: { select: { name: true, email: true } },
             attachmentFiles: {
+              // Inline media (embedded in a step's rich text) isn't a panel
+              // attachment — it lives in the step and is managed there.
+              where: { inline: false },
               select: { id: true, fileName: true, mimeType: true, size: true },
               orderBy: { createdAt: "asc" },
             },

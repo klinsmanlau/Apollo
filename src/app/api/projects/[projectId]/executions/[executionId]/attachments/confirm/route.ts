@@ -31,7 +31,7 @@ export async function POST(
 
   const exec = await prisma.testExecution.findFirst({
     where: { id: executionId, run: { projectId } },
-    select: { id: true, _count: { select: { attachmentFiles: true } } },
+    select: { id: true },
   });
   if (!exec) return new Response("Not found", { status: 404 });
 
@@ -39,10 +39,12 @@ export async function POST(
     key?: string;
     fileName?: string;
     mimeType?: string;
+    inline?: boolean;
   } | null;
   const key = body?.key || "";
   const fileName = (body?.fileName || "attachment").slice(0, 200);
   const mimeType = body?.mimeType || "";
+  const inline = body?.inline === true;
 
   // The key must be one we mint (random UUID under executions/); this also stops
   // a client pointing a row at an arbitrary storage path.
@@ -71,12 +73,17 @@ export async function POST(
       { status: 400 }
     );
   }
-  if (exec._count.attachmentFiles >= MAX_PER_EXECUTION) {
-    await deleteFromStorage(key).catch(() => {});
-    return Response.json(
-      { error: `Max ${MAX_PER_EXECUTION} attachments per execution` },
-      { status: 400 }
-    );
+  if (!inline) {
+    const count = await prisma.attachment.count({
+      where: { executionId, inline: false },
+    });
+    if (count >= MAX_PER_EXECUTION) {
+      await deleteFromStorage(key).catch(() => {});
+      return Response.json(
+        { error: `Max ${MAX_PER_EXECUTION} attachments per execution` },
+        { status: 400 }
+      );
+    }
   }
 
   try {
@@ -88,6 +95,7 @@ export async function POST(
         size: stat.size,
         storageKey: key,
         uploadedById: user.id,
+        inline,
       },
       select: { id: true, fileName: true, mimeType: true, size: true },
     });

@@ -12,6 +12,7 @@ import {
   ListOrdered,
   Table as TableIcon,
   Image as ImageIcon,
+  Film as FilmIcon,
   Link as LinkIcon,
   Code,
   ClearFormat,
@@ -36,6 +37,7 @@ export function RichTextEditor({
   value,
   onChange,
   onImageUpload,
+  onVideoUpload,
   placeholder = "Click to type the actual result",
   minHeight = 92,
 }: {
@@ -46,6 +48,12 @@ export function RichTextEditor({
    * When omitted, the image is embedded inline as a base64 data URL instead.
    */
   onImageUpload?: (file: File) => Promise<string | null>;
+  /**
+   * Upload a picked video file and return the URL to embed as a <video>, or
+   * null to abort. Videos are never inlined; when this is omitted the video
+   * toolbar button and video paste are disabled.
+   */
+  onVideoUpload?: (file: File) => Promise<string | null>;
   placeholder?: string;
   minHeight?: number;
 }) {
@@ -152,12 +160,21 @@ export function RichTextEditor({
     if (url) exec("createLink", url);
   }
 
-  function insertImage() {
+  function openPicker(accept: string) {
     // Remember where the caret is, then open the OS file picker.
     const sel = window.getSelection?.();
     savedRange.current =
       sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
-    fileRef.current?.click();
+    if (fileRef.current) {
+      fileRef.current.accept = accept;
+      fileRef.current.click();
+    }
+  }
+  function insertImage() {
+    openPicker("image/*");
+  }
+  function insertVideo() {
+    openPicker("video/*");
   }
 
   // Shared by the toolbar button and paste: run the file through the caller's
@@ -188,25 +205,61 @@ export function RichTextEditor({
     }
   }
 
-  async function onImagePicked(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // allow re-picking the same file
-    if (file) await insertImageFile(file);
+  // Upload a video via the caller's uploader and insert a <video> at the caret.
+  async function insertVideoFile(file: File) {
+    if (!onVideoUpload) return;
+    setImgError(null);
+    setUploading(true);
+    try {
+      const url = await onVideoUpload(file);
+      if (!url) return;
+      ref.current?.focus();
+      const sel = window.getSelection?.();
+      if (sel && savedRange.current) {
+        sel.removeAllRanges();
+        sel.addRange(savedRange.current);
+      }
+      insertHTML(
+        `<video controls src="${url}" style="max-width:100%;border-radius:6px"></video><p><br></p>`
+      );
+      if (ref.current) onChange(ref.current.innerHTML);
+    } catch (err) {
+      setImgError(err instanceof Error ? err.message : "Could not add the video.");
+    } finally {
+      setUploading(false);
+    }
   }
 
-  // Intercept pasted image files so they go through the same compress/cap path
-  // as the toolbar button; text and other content paste normally.
+  // Route a picked file to the right inserter by type.
+  async function insertMediaFile(file: File) {
+    if (file.type.startsWith("video/")) {
+      if (onVideoUpload) await insertVideoFile(file);
+      return;
+    }
+    await insertImageFile(file);
+  }
+
+  async function onFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-picking the same file
+    if (file) await insertMediaFile(file);
+  }
+
+  // Intercept pasted image (and, when enabled, video) files so they go through
+  // the same upload path as the toolbar buttons; other content pastes normally.
   function onPaste(e: React.ClipboardEvent) {
-    const images = Array.from(e.clipboardData?.files ?? []).filter((f) =>
-      f.type.startsWith("image/")
+    const media = Array.from(e.clipboardData?.files ?? []).filter(
+      (f) =>
+        f.type.startsWith("image/") ||
+        (onVideoUpload && f.type.startsWith("video/"))
     );
-    if (images.length === 0) return;
+    if (media.length === 0) return;
     e.preventDefault();
     const sel = window.getSelection?.();
     savedRange.current =
       sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
     void (async () => {
-      for (const f of images) await insertImageFile(f);
+      for (const f of media) await insertMediaFile(f);
     })();
   }
 
@@ -244,6 +297,9 @@ export function RichTextEditor({
     { key: "ol", title: "Numbered list", icon: <ListOrdered size={15} />, action: { kind: "cmd", command: "insertOrderedList" } },
     { key: "table", title: "Insert table", icon: <TableIcon size={15} />, action: { kind: "custom", run: insertTable } },
     { key: "image", title: "Insert image", icon: <ImageIcon size={15} />, action: { kind: "custom", run: insertImage } },
+    ...(onVideoUpload
+      ? [{ key: "video", title: "Insert video", icon: <FilmIcon size={15} />, action: { kind: "custom" as const, run: insertVideo } }]
+      : []),
     { key: "link", title: "Insert link", icon: <LinkIcon size={15} />, action: { kind: "custom", run: insertLink } },
     { key: "code", title: "Insert code snippet", icon: <Code size={15} />, action: { kind: "custom", run: insertCode } },
     { key: "clear", title: "Clear formatting", icon: <ClearFormat size={15} />, action: { kind: "custom", run: clearFormatting } },
@@ -262,7 +318,7 @@ export function RichTextEditor({
         type="file"
         accept="image/*"
         className="hidden"
-        onChange={onImagePicked}
+        onChange={onFilePicked}
       />
       {focused && (
         <div className="flex flex-wrap items-center gap-0.5 border-b border-line bg-surface-muted/60 px-1.5 py-1">
@@ -353,7 +409,7 @@ export function RichTextEditor({
 
 /** True when the editor holds no meaningful content (only whitespace / <br>). */
 function isBlank(el: HTMLElement): boolean {
-  if (el.querySelector("img,table,pre,ul,ol,li")) return false;
+  if (el.querySelector("img,video,table,pre,ul,ol,li")) return false;
   return el.textContent?.trim().length === 0;
 }
 

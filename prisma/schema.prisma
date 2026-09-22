@@ -408,6 +408,10 @@ model Attachment {
   fileName     String
   mimeType     String
   size         Int // bytes
+  // True for media embedded inside a step's rich-text Actual Result (e.g. a
+  // video). Hidden from the attachments panel and auto-deleted when the
+  // embedding HTML no longer references it. Panel attachments stay false.
+  inline       Boolean  @default(false)
   // Bytes live in Supabase Storage; this key is the object path in the
   // "attachments" bucket. (Migrated off the old Postgres `data` column.)
   storageKey   String

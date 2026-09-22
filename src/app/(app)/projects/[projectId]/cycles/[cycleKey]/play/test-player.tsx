@@ -22,6 +22,45 @@ type StepResult = { status: string; actual?: string };
 const INLINE_IMAGE_MAX_BYTES = 1.5 * 1024 * 1024; // 1.5 MB after compression
 const INLINE_IMAGE_MAX_LABEL = "1.5 MB";
 
+// Upload a video to Supabase Storage as an inline attachment and return the
+// stable API URL to embed as <video>. Reuses the attachments sign→PUT→confirm
+// flow; `inline:true` keeps it out of the panel and enables removal cleanup.
+async function uploadStepVideo(
+  projectId: string,
+  executionId: string,
+  file: File
+): Promise<string | null> {
+  const base = `/api/projects/${projectId}/executions/${executionId}/attachments`;
+  const fileName = file.name || "video";
+  const mimeType = file.type || "video/mp4";
+
+  const signRes = await fetch(`${base}/sign`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ fileName, mimeType, size: file.size, inline: true }),
+  });
+  const signBody = await signRes.json().catch(() => null);
+  if (!signRes.ok) throw new Error(signBody?.error ?? "Video upload failed");
+  const { key, uploadUrl } = signBody as { key: string; uploadUrl: string };
+
+  const fd = new FormData();
+  fd.append("cacheControl", "3600");
+  fd.append("", file);
+  const putRes = await fetch(uploadUrl, { method: "PUT", body: fd }).catch(() => null);
+  if (!putRes || !putRes.ok) {
+    throw new Error(`Could not upload "${fileName}" — it may exceed the size limit.`);
+  }
+
+  const confRes = await fetch(`${base}/confirm`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ key, fileName, mimeType, inline: true }),
+  });
+  const confBody = await confRes.json().catch(() => null);
+  if (!confRes.ok) throw new Error(confBody?.error ?? "Video upload failed");
+  return `/api/projects/${projectId}/attachments/${confBody.attachment.id}`;
+}
+
 async function embedInlineImage(file: File): Promise<string | null> {
   const compressed = await compressImage(file);
   if (compressed.size > INLINE_IMAGE_MAX_BYTES) {
@@ -41,7 +80,7 @@ function hasEvidence(e: {
   stepResults: StepResult[];
 }): boolean {
   if (e.attachments.length > 0) return true;
-  return (e.stepResults ?? []).some((r) => /<img\b/i.test(r?.actual ?? ""));
+  return (e.stepResults ?? []).some((r) => /<(img|video)\b/i.test(r?.actual ?? ""));
 }
 
 export type AttachmentMeta = {
@@ -1219,6 +1258,7 @@ export function TestPlayer({
                               value={cur.stepResults[i]?.actual ?? ""}
                               onChange={(html) => setStepActual(cur.id, i, html)}
                               onImageUpload={embedInlineImage}
+                              onVideoUpload={(file) => uploadStepVideo(projectId, cur.id, file)}
                             />
                           </div>
                         </div>

@@ -35,7 +35,7 @@ export async function POST(
 
   const exec = await prisma.testExecution.findFirst({
     where: { id: executionId, run: { projectId } },
-    select: { id: true, _count: { select: { attachmentFiles: true } } },
+    select: { id: true },
   });
   if (!exec) return new Response("Not found", { status: 404 });
 
@@ -43,10 +43,14 @@ export async function POST(
     fileName?: string;
     mimeType?: string;
     size?: number;
+    inline?: boolean;
   } | null;
   const fileName = (body?.fileName || "attachment").slice(0, 200);
   const mimeType = body?.mimeType || "";
   const size = typeof body?.size === "number" ? body.size : 0;
+  // Inline media (embedded in a step's rich text) is capped by removal cleanup,
+  // not by the per-execution panel limit.
+  const inline = body?.inline === true;
 
   if (!ALLOWED_TYPES.has(mimeType)) {
     return Response.json(
@@ -60,12 +64,18 @@ export async function POST(
       { status: 400 }
     );
   }
-  // Best-effort early gate; /confirm re-checks under the real count.
-  if (exec._count.attachmentFiles >= MAX_PER_EXECUTION) {
-    return Response.json(
-      { error: `Max ${MAX_PER_EXECUTION} attachments per execution` },
-      { status: 400 }
-    );
+  // Best-effort early gate; /confirm re-checks under the real count. Only panel
+  // attachments count toward the limit.
+  if (!inline) {
+    const count = await prisma.attachment.count({
+      where: { executionId, inline: false },
+    });
+    if (count >= MAX_PER_EXECUTION) {
+      return Response.json(
+        { error: `Max ${MAX_PER_EXECUTION} attachments per execution` },
+        { status: 400 }
+      );
+    }
   }
 
   if (!storageEnabled()) {
