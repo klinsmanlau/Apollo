@@ -11,6 +11,7 @@ import {
 import { nextCycleKey, parseKey } from "@/lib/keys";
 import { caseSourceProjectId } from "@/lib/case-source";
 import { executionPinFromCase } from "@/lib/case-versions-db";
+import { computeCycleChanges } from "@/lib/cycle-changes";
 import type { ExecutionStatus, CycleStatus, Prisma } from "@prisma/client";
 
 // ---- Cycles ---------------------------------------------------------------
@@ -52,6 +53,15 @@ export async function createCycle(
     },
     select: { id: true, key: true },
   });
+  await prisma.cycleChange.create({
+    data: {
+      runId: run.id,
+      changedById: user.id,
+      changedByName: user.name ?? user.email,
+      field: "__created__",
+      label: "Created",
+    },
+  });
   revalidatePath(`/projects/${projectId}/cycles`);
   return run;
 }
@@ -69,6 +79,18 @@ export async function autosaveCycle(
     select: {
       id: true,
       projectId: true,
+      // Current values, so we can log what each edited field changed from.
+      name: true,
+      description: true,
+      environment: true,
+      version: true,
+      iteration: true,
+      ownerName: true,
+      status: true,
+      startDate: true,
+      endDate: true,
+      folderId: true,
+      customFields: true,
       project: {
         select: {
           members: { where: { userId: user.id }, select: { role: true } },
@@ -107,10 +129,50 @@ export async function autosaveCycle(
   }
 
   if (Object.keys(data).length === 0) return { ok: true };
+
+  // Resolve folder paths for the History log only when the folder changed.
+  let folderPath = (_id: string | null | undefined) => "";
+  if ("folderId" in data) {
+    const folders = await prisma.cycleFolder.findMany({
+      where: { projectId: run.projectId },
+      select: { id: true, name: true, parentFolderId: true },
+    });
+    const byId = new Map(folders.map((f) => [f.id, f]));
+    folderPath = (id) => {
+      const parts: string[] = [];
+      let cur = id ? byId.get(id) : undefined;
+      while (cur) {
+        parts.unshift(cur.name);
+        cur = cur.parentFolderId ? byId.get(cur.parentFolderId) : undefined;
+      }
+      return parts.length ? `/${parts.join("/")}` : "";
+    };
+  }
+
+  const changes = computeCycleChanges(
+    run as unknown as import("@/lib/cycle-changes").CycleFieldValues,
+    data as import("@/lib/cycle-changes").CycleFieldValues,
+    folderPath
+  );
+
   await prisma.testRun.update({
     where: { id: cycleId },
     data: data as Prisma.TestRunUncheckedUpdateInput,
   });
+
+  if (changes.length) {
+    await prisma.cycleChange.createMany({
+      data: changes.map((ch) => ({
+        runId: cycleId,
+        changedById: user.id,
+        changedByName: user.name ?? user.email,
+        field: ch.field,
+        label: ch.label,
+        oldValue: ch.oldValue,
+        newValue: ch.newValue,
+      })),
+    });
+  }
   return { ok: true };
 }
 
@@ -126,7 +188,7 @@ export async function cloneCycles(projectId: string, cycleIds: string[]) {
     const src = byId.get(id);
     if (!src) continue;
     const key = await nextCycleKey(projectId);
-    await prisma.testRun.create({
+    const cloned = await prisma.testRun.create({
       data: {
         projectId,
         key,
@@ -143,6 +205,16 @@ export async function cloneCycles(projectId: string, cycleIds: string[]) {
             status: "not_executed" as ExecutionStatus,
           })),
         },
+      },
+      select: { id: true },
+    });
+    await prisma.cycleChange.create({
+      data: {
+        runId: cloned.id,
+        changedById: user.id,
+        changedByName: user.name ?? user.email,
+        field: "__created__",
+        label: "Created",
       },
     });
   }

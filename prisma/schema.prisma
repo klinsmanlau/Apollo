@@ -39,6 +39,7 @@ model User {
   assignedExecutions TestExecution[] @relation("AssignedTo")
   linkedIssuesCreated LinkedIssue[]  @relation("LinkedIssueCreatedBy")
   caseVersions   TestCaseVersion[] @relation("CaseVersionCreatedBy")
+  cycleChanges   CycleChange[]     @relation("CycleChangedBy")
 
   @@index([email])
 }
@@ -255,10 +256,33 @@ model TestRun {
   project    Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
   folder     CycleFolder?    @relation(fields: [folderId], references: [id], onDelete: SetNull)
   executions TestExecution[]
+  changes    CycleChange[]
 
   @@index([projectId])
   @@index([folderId])
   @@index([keyNum])
+}
+
+// Field-level audit log for a test cycle: one row per changed field, so the
+// cycle History tab can show who changed what, and from which value to which.
+// `field` is a stable key ("name", "startDate", "folderId", "cf:POD", or the
+// synthetic "__created__"); `label` is its display name.
+model CycleChange {
+  id            String   @id @default(cuid())
+  runId         String
+  changedById   String?
+  // Denormalized so history stays readable even if the user is later removed.
+  changedByName String
+  field         String
+  label         String
+  oldValue      String?
+  newValue      String?
+  createdAt     DateTime @default(now())
+
+  run       TestRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  changedBy User?   @relation("CycleChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([runId, createdAt])
 }
 
 // Nestable folders for test cycles (separate tree from test-case suites).

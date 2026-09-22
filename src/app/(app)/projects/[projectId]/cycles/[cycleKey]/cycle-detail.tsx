@@ -34,6 +34,17 @@ export type ExecRow = {
   assignedToName: string | null;
 };
 
+// One row of the cycle's field-change history (newest first from the server).
+export type CycleChangeRow = {
+  id: string;
+  changedByName: string;
+  createdAt: string;
+  field: string;
+  label: string;
+  oldValue: string | null;
+  newValue: string | null;
+};
+
 export type CycleData = {
   id: string;
   key: string | null;
@@ -53,6 +64,7 @@ export type CycleData = {
   executions: ExecRow[];
   suites: WSuite[];
   suiteCounts: Record<string, number>;
+  changes: CycleChangeRow[];
 };
 
 const TABS = ["Details", "Test cases", "Traceability", "History"] as const;
@@ -65,6 +77,19 @@ const CYCLE_STATUS: Opt[] = [
 ];
 const POD_OPTIONS = CUSTOM_FIELDS.find((f) => f.key === "POD")?.options ?? [];
 
+
+// e.g. "21/Sep/26 2:09 PM" — matches the History screenshot.
+function fmtHistoryDate(iso: string): string {
+  const d = new Date(iso);
+  const day = d.getDate();
+  const mon = d.toLocaleString("en-US", { month: "short" });
+  const yy = String(d.getFullYear()).slice(-2);
+  let h = d.getHours();
+  const min = String(d.getMinutes()).padStart(2, "0");
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  return `${day}/${mon}/${yy} ${h}:${min} ${ampm}`;
+}
 
 const labelCls =
   "mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted";
@@ -294,6 +319,14 @@ export function CycleDetail({
   useEffect(() => {
     setExecs(initial.executions);
   }, [initial.executions]);
+
+  // Opening History flushes any pending edit then refreshes so the log shows
+  // the just-recorded change (History renders from the fresh server prop).
+  useEffect(() => {
+    if (tab !== "History") return;
+    flush().then(() => router.refresh());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
   const pending = useRef<Record<string, unknown>>({});
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -698,11 +731,56 @@ export function CycleDetail({
           </div>
         )}
 
-        {(tab === "Traceability" || tab === "History") && (
+        {tab === "Traceability" && (
           <div className="flex h-full items-center justify-center py-16 text-sm text-subtle">
-            {tab} — coming in a later phase.
+            Traceability — coming in a later phase.
           </div>
         )}
+
+        {tab === "History" &&
+          (initial.changes.length === 0 ? (
+            <div className="flex h-full items-center justify-center py-16 text-sm text-subtle">
+              No changes recorded yet.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[720px] text-sm">
+                <thead className="border-b border-line text-[11px] uppercase tracking-wide text-subtle">
+                  <tr>
+                    <th className="py-2 pr-4 text-left font-semibold">Changed By</th>
+                    <th className="py-2 pr-4 text-left font-semibold">Date</th>
+                    <th className="py-2 pr-4 text-left font-semibold">Field</th>
+                    <th className="py-2 pr-4 text-left font-semibold">Original Value</th>
+                    <th className="py-2 text-left font-semibold">New Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {initial.changes.map((ch) => {
+                    const isCreated = ch.field === "__created__";
+                    return (
+                      <tr key={ch.id} className="border-b border-line/60 align-top">
+                        <td className="whitespace-nowrap py-2 pr-4 text-fg">
+                          {ch.changedByName}
+                        </td>
+                        <td className="whitespace-nowrap py-2 pr-4 text-muted">
+                          {fmtHistoryDate(ch.createdAt)}
+                        </td>
+                        <td className="whitespace-nowrap py-2 pr-4 text-muted">
+                          {ch.label}
+                        </td>
+                        <td className="whitespace-pre-line py-2 pr-4 text-muted">
+                          {isCreated ? "" : ch.oldValue ?? "—"}
+                        </td>
+                        <td className="whitespace-pre-line py-2 text-muted">
+                          {isCreated ? "" : ch.newValue ?? "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ))}
       </div>
     </div>
   );

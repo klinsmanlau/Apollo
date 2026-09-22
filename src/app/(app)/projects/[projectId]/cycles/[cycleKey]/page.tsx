@@ -28,6 +28,10 @@ export default async function CycleRunPage({
           },
           orderBy: { createdAt: "asc" },
         },
+        changes: {
+          orderBy: { createdAt: "desc" },
+          take: 300,
+        },
       },
     }),
     prisma.cycleFolder.findMany({
@@ -89,6 +93,15 @@ export default async function CycleRunPage({
     users: members.map((m) => m.user),
     suites,
     suiteCounts,
+    changes: cycle.changes.map((ch) => ({
+      id: ch.id,
+      changedByName: ch.changedByName,
+      createdAt: ch.createdAt.toISOString(),
+      field: ch.field,
+      label: ch.label,
+      oldValue: ch.oldValue,
+      newValue: ch.newValue,
+    })),
     executions: cycle.executions.map((e) => ({
       id: e.id,
       status: e.status,
