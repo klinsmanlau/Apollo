@@ -65,7 +65,7 @@ export default async function ProjectPage({
         {canEdit && <ImportModal projectId={projectId} />}
       </div>
 
-      <ProjectTabs projectId={projectId} />
+      <ProjectTabs projectId={projectId} isAdmin={user.role === "admin"} />
 
       <ProjectWorkspace
         projectId={projectId}

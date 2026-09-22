@@ -13,6 +13,9 @@ export default async function MembersPage({
 }) {
   const { projectId } = await params;
   const user = await requireUser();
+  // Members management is admin-only — hide the page from everyone else so it
+  // can't be reached directly by URL (the tab is also hidden for non-admins).
+  if (user.role !== "admin") notFound();
 
   // Role check runs inside the parallel batch; its result gates rendering.
   const [myRole, project, members] = await Promise.all([
@@ -46,7 +49,7 @@ export default async function MembersPage({
         <h1 className="mt-1 text-2xl font-bold text-fg">{project.name}</h1>
       </div>
 
-      <ProjectTabs projectId={projectId} />
+      <ProjectTabs projectId={projectId} isAdmin={user.role === "admin"} />
 
       <MembersPanel
         projectId={projectId}

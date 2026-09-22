@@ -67,7 +67,7 @@ export default async function CyclesPage({
         <h1 className="mt-1 text-2xl font-bold text-fg">{project.name}</h1>
       </div>
 
-      <ProjectTabs projectId={projectId} />
+      <ProjectTabs projectId={projectId} isAdmin={user.role === "admin"} />
 
       <CycleWorkspace
         projectId={projectId}

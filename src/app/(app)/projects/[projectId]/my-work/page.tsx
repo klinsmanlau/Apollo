@@ -66,7 +66,7 @@ export default async function MyWorkPage({
         <h1 className="mt-1 text-2xl font-bold text-fg">{project.name}</h1>
       </div>
 
-      <ProjectTabs projectId={projectId} />
+      <ProjectTabs projectId={projectId} isAdmin={user.role === "admin"} />
 
       <div className="min-h-0 flex-1 overflow-y-auto pb-6">
         <div className="mx-auto w-full max-w-4xl">

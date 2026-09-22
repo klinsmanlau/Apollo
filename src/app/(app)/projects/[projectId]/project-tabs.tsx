@@ -49,7 +49,14 @@ function TabLoadingOverlay({ top }: { top: number }) {
   );
 }
 
-export function ProjectTabs({ projectId }: { projectId: string }) {
+export function ProjectTabs({
+  projectId,
+  isAdmin = false,
+}: {
+  projectId: string;
+  /** Global admins only: gates the Members tab. */
+  isAdmin?: boolean;
+}) {
   const path = usePathname();
   const barRef = useRef<HTMLDivElement>(null);
   const [pendingHrefs, setPendingHrefs] = useState<string[]>([]);
@@ -82,7 +89,10 @@ export function ProjectTabs({ projectId }: { projectId: string }) {
     },
     { href: `/projects/${projectId}/cycles`, label: "Test Cycles", active: onCycles },
     { href: `/projects/${projectId}/my-work`, label: "My Work", active: onMyWork },
-    { href: `/projects/${projectId}/members`, label: "Members", active: onMembers },
+    // Members management is admin-only.
+    ...(isAdmin
+      ? [{ href: `/projects/${projectId}/members`, label: "Members", active: onMembers }]
+      : []),
   ];
 
   return (
