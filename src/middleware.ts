@@ -1,12 +1,15 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
-// Public routes: auth screens and the Clerk webhook (verified by signature).
+// Public routes: auth screens, signature-verified webhooks, and the public
+// read API (`/api/v1/*`), which does its own per-request API-key auth
+// (see src/lib/api-auth.ts) instead of a Clerk session.
 const isPublicRoute = createRouteMatcher([
   "/",
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/api/webhooks/clerk",
   "/api/webhooks/devicecloud(.*)",
+  "/api/v1(.*)",
 ]);
 
 export default clerkMiddleware(async (auth, req) => {

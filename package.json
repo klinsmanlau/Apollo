@@ -15,7 +15,9 @@
     "db:studio": "prisma studio",
     "zephyr:sync": "tsx prisma/zephyr-sync.ts",
     "zephyr:sync-cycles": "tsx prisma/zephyr-sync-cycles.ts",
-    "zephyr:update": "bash scripts/sync-zephyr.sh"
+    "zephyr:update": "bash scripts/sync-zephyr.sh",
+    "apikey:create": "tsx --env-file=.env prisma/create-api-key.ts",
+    "apikey:update": "tsx --env-file=.env prisma/update-api-key.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
