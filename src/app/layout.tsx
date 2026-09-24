@@ -1,7 +1,16 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
+import { Inter } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
+
+// Self-hosted by next/font (no runtime network request, CSP-safe). Exposed as a
+// CSS variable that globals.css puts at the front of the sans stack.
+const inter = Inter({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-inter",
+});
 
 export const metadata: Metadata = {
   title: "Apollo — Test Case Management",
@@ -37,7 +46,7 @@ export default async function RootLayout({
     <ClerkProvider>
       <html
         lang="en"
-        className={theme === "dark" ? "dark" : undefined}
+        className={`${inter.variable}${theme === "dark" ? " dark" : ""}`}
         suppressHydrationWarning
       >
         <head>
