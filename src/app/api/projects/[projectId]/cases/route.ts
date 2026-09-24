@@ -1,4 +1,4 @@
-import { auth } from "@clerk/nextjs/server";
+import { getCurrentUserId } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
   queryCasePage,
@@ -13,14 +13,14 @@ const SORT_FIELDS = new Set(["key", "title", "priority", "status"]);
 const ALLOWED_PAGE_SIZES = new Set([40, 60, 80, 100]);
 
 // On-demand, paginated case fetch for the workspace table. Membership is
-// enforced inside the query (via clerk id), and the client passes the folder's
-// subtree ids — so this is a single DB round-trip (findMany + count).
+// enforced inside the query (via the local user id), and the client passes the
+// folder's subtree ids — so this is a single DB round-trip (findMany + count).
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
-  const { userId } = await auth();
+  const userId = await getCurrentUserId();
   if (!userId) return new Response("Unauthorized", { status: 401 });
 
   const url = new URL(req.url);
@@ -29,10 +29,10 @@ export async function GET(
   // not be a member of the source project — then query the source's cases.
   const useSource = url.searchParams.get("source") === "1";
   let queryProjectId = projectId;
-  let memberOpts: { memberClerkId?: string } = { memberClerkId: userId };
+  let memberOpts: { memberUserId?: string } = { memberUserId: userId };
   if (useSource) {
     const isMember = await prisma.projectMember.findFirst({
-      where: { projectId, user: { clerkUserId: userId } },
+      where: { projectId, userId },
       select: { id: true },
     });
     if (!isMember) return new Response("Forbidden", { status: 403 });

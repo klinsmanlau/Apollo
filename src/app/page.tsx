@@ -1,10 +1,10 @@
 import Link from "next/link";
-import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
+import { getSessionId } from "@/lib/auth-provider";
 
 export default async function Home() {
-  const { userId } = await auth();
-  if (userId) redirect("/projects");
+  const externalId = await getSessionId();
+  if (externalId) redirect("/projects");
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col items-center justify-center px-6 text-center">

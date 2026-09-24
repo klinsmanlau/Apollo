@@ -1,25 +1,29 @@
 import { cache } from "react";
-import { auth, currentUser } from "@clerk/nextjs/server";
+import { getSessionId, getSessionProfile } from "@/lib/auth-provider";
 import { prisma } from "@/lib/prisma";
 import { ensureMemberOfAllProjects } from "@/lib/onboarding";
 import type { Role, User } from "@prisma/client";
 
 /**
- * Resolve the Apollo `User` row for the currently signed-in Clerk user.
+ * Resolve the Apollo `User` row for the currently signed-in user.
+ *
+ * Identity comes from the provider-neutral seam in `@/lib/auth-provider`, so
+ * this (and everything downstream) is independent of which IdP is in use —
+ * users are keyed by `externalAuthId`, not anything Clerk-specific.
  *
  * Wrapped in React `cache()` so multiple callers within one request (e.g. the
  * app layout and the page) share a single DB lookup instead of repeating it.
  *
- * The Clerk webhook (`/api/webhooks/clerk`) normally creates this row on
+ * The auth webhook (`/api/webhooks/clerk`) normally creates this row on
  * sign-up, but we upsert here as a fallback so the app works even before the
  * webhook is configured (e.g. local dev without a public tunnel).
  */
 export const getCurrentUser = cache(async (): Promise<User | null> => {
-  const { userId } = await auth();
-  if (!userId) return null;
+  const externalId = await getSessionId();
+  if (!externalId) return null;
 
   const existing = await prisma.user.findUnique({
-    where: { clerkUserId: userId },
+    where: { externalAuthId: externalId },
   });
   if (existing) {
     // Internal-team model: keep every user a member of every project, so a
@@ -32,25 +36,33 @@ export const getCurrentUser = cache(async (): Promise<User | null> => {
   }
 
   // Fallback provisioning if the webhook hasn't run yet.
-  const clerk = await currentUser();
-  if (!clerk) return null;
-
-  const email =
-    clerk.primaryEmailAddress?.emailAddress ??
-    clerk.emailAddresses[0]?.emailAddress;
-  if (!email) return null;
-
-  const name =
-    [clerk.firstName, clerk.lastName].filter(Boolean).join(" ") || null;
+  const profile = await getSessionProfile();
+  if (!profile || !profile.email) return null;
 
   const provisioned = await prisma.user.upsert({
-    where: { clerkUserId: userId },
-    update: { email, name },
-    create: { clerkUserId: userId, email, name },
+    where: { externalAuthId: externalId },
+    update: { email: profile.email, name: profile.name },
+    create: { externalAuthId: externalId, email: profile.email, name: profile.name },
   });
   // New internal accounts join every project automatically (idempotent).
   await ensureMemberOfAllProjects(provisioned.id);
   return provisioned;
+});
+
+/**
+ * The local `User.id` for the signed-in user, or null — a light lookup that
+ * skips the project-membership sweep in {@link getCurrentUser}. Use it on hot
+ * paths (e.g. paginated API routes) that only need the id for a scoped query;
+ * provisioning still happens via the app layout and the auth webhook.
+ */
+export const getCurrentUserId = cache(async (): Promise<string | null> => {
+  const externalId = await getSessionId();
+  if (!externalId) return null;
+  const u = await prisma.user.findUnique({
+    where: { externalAuthId: externalId },
+    select: { id: true },
+  });
+  return u?.id ?? null;
 });
 
 /** Like {@link getCurrentUser} but throws if there is no signed-in user. */

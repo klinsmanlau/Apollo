@@ -56,13 +56,13 @@ function buildWhere(
   projectId: string,
   scope: CycleScope,
   q: string | undefined,
-  memberClerkId?: string
+  memberUserId?: string
 ): Prisma.TestRunWhereInput {
-  const where: Prisma.TestRunWhereInput = memberClerkId
+  const where: Prisma.TestRunWhereInput = memberUserId
     ? {
         project: {
           id: projectId,
-          members: { some: { user: { clerkUserId: memberClerkId } } },
+          members: { some: { userId: memberUserId } },
         },
       }
     : { projectId };
@@ -107,9 +107,9 @@ export async function queryCyclePage(
   page: number,
   sort?: CycleSort,
   dir: SortDir = "asc",
-  memberClerkId?: string
+  memberUserId?: string
 ): Promise<{ cycles: CycleRow[]; total: number }> {
-  const where = buildWhere(projectId, scope, q, memberClerkId);
+  const where = buildWhere(projectId, scope, q, memberUserId);
   const orderBy: Prisma.TestRunOrderByWithRelationInput[] =
     sort === "name"
       ? [{ name: dir }, { id: dir }]

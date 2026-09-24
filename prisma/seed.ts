@@ -12,7 +12,7 @@ async function main() {
     where: { email: "demo@apollo.local" },
     update: {},
     create: {
-      clerkUserId: "seed_demo_user",
+      externalAuthId: "seed_demo_user",
       email: "demo@apollo.local",
       name: "Demo User",
       role: "admin",

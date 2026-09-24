@@ -1,4 +1,4 @@
-import { auth } from "@clerk/nextjs/server";
+import { getCurrentUserId } from "@/lib/auth";
 import {
   queryCyclePage,
   type CycleSort,
@@ -12,7 +12,7 @@ export async function GET(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
-  const { userId } = await auth();
+  const userId = await getCurrentUserId();
   if (!userId) return new Response("Unauthorized", { status: 401 });
 
   const url = new URL(req.url);

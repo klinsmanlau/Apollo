@@ -49,9 +49,9 @@ export async function POST(req: Request) {
       const name = [first_name, last_name].filter(Boolean).join(" ") || null;
 
       const user = await prisma.user.upsert({
-        where: { clerkUserId: id },
+        where: { externalAuthId: id },
         update: { email, name },
-        create: { clerkUserId: id, email, name },
+        create: { externalAuthId: id, email, name },
         select: { id: true },
       });
       // Internal-team model: every account belongs to all projects.
@@ -61,7 +61,7 @@ export async function POST(req: Request) {
     case "user.deleted": {
       const id = evt.data.id;
       if (id) {
-        await prisma.user.deleteMany({ where: { clerkUserId: id } });
+        await prisma.user.deleteMany({ where: { externalAuthId: id } });
       }
       break;
     }

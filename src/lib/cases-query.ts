@@ -24,8 +24,9 @@ export type CaseScope = {
 };
 
 export type CaseWhereOpts = {
-  // If set, membership is enforced in the query itself (no extra round-trip).
-  memberClerkId?: string;
+  // If set (the local User.id), membership is enforced in the query itself
+  // (no extra round-trip).
+  memberUserId?: string;
 };
 
 /** All suite ids in the subtree rooted at `suiteId` (inclusive). */
@@ -66,13 +67,13 @@ export async function buildCaseWhere(
   filters?: CaseFilter[]
 ): Promise<Prisma.TestCaseWhereInput> {
   const where: Prisma.TestCaseWhereInput = {
-    // Enforce project membership inside the query when a clerk id is given,
+    // Enforce project membership inside the query when a user id is given,
     // avoiding separate auth round-trips.
-    suite: opts?.memberClerkId
+    suite: opts?.memberUserId
       ? {
           projectId,
           project: {
-            members: { some: { user: { clerkUserId: opts.memberClerkId } } },
+            members: { some: { userId: opts.memberUserId } },
           },
         }
       : { projectId },

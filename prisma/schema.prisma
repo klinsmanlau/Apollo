@@ -24,8 +24,12 @@ enum Role {
 
 model User {
   id          String   @id @default(cuid())
-  // Clerk's user id (e.g. "user_2abc..."). Kept in sync via the Clerk webhook.
-  clerkUserId String   @unique
+  // The IdP's stable subject id for this user (a Clerk user id like
+  // "user_2abc..." today). Named provider-neutrally so a future SSO migration
+  // touches only the auth seam, not the schema. `@map` keeps the physical
+  // column named `clerkUserId`, so this rename needs no DB migration / no data
+  // loss; rename the column properly at actual cutover.
+  externalAuthId String @unique @map("clerkUserId")
   email       String   @unique
   name        String?
   role        Role     @default(tester)
@@ -60,6 +64,33 @@ model Project {
   suites       TestSuite[]
   runs         TestRun[]
   cycleFolders CycleFolder[]
+  apiKeys      ApiKey[]
+}
+
+/**
+ * A machine-to-machine API key for the public read API (`/api/v1/*`), used by
+ * external integrations (e.g. the QA dashboard) to crawl data. The raw key is
+ * shown once at creation; only its SHA-256 hash is stored. Keys are scoped and
+ * revocable so each integration is independently issued and cut off.
+ */
+model ApiKey {
+  id         String    @id @default(cuid())
+  // Human label, e.g. "qa-dashboard (prod)".
+  name       String
+  // SHA-256 hex of the raw key — the raw value is never stored.
+  hashedKey  String    @unique
+  // Optional project scope; null means all projects.
+  projectId  String?
+  // Granted scopes, e.g. ["cases:read", "executions:read"].
+  scopes     String[]  @default([])
+  lastUsedAt DateTime?
+  // Set to disable the key without deleting it (keeps an audit trail).
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  project    Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
 }
 
 // Join table: User <-> Project (many-to-many) with a per-project role.
