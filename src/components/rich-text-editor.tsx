@@ -49,6 +49,7 @@ export function RichTextEditor({
   onVideoUpload,
   placeholder = "Click to type the actual result",
   minHeight = 92,
+  quiet = false,
 }: {
   value: string;
   onChange: (html: string) => void;
@@ -65,6 +66,13 @@ export function RichTextEditor({
   onVideoUpload?: (file: File) => Promise<string | null>;
   placeholder?: string;
   minHeight?: number;
+  /**
+   * "Quiet" chrome: no border/background at rest (blends into the surrounding
+   * card), a subtle border on hover, and the full framed + ring look only once
+   * focused. Use when the editor sits inline in a card and a resting outline
+   * would look boxy.
+   */
+  quiet?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -379,8 +387,12 @@ export function RichTextEditor({
 
   return (
     <div
-      className={`overflow-hidden rounded-lg border bg-surface transition-colors ${
-        focused ? "border-ring ring-4 ring-ring/12" : "border-line"
+      className={`overflow-hidden rounded-lg border transition-colors ${
+        focused
+          ? "border-ring bg-surface ring-4 ring-ring/12"
+          : quiet
+            ? "border-transparent bg-transparent hover:border-line hover:bg-surface"
+            : "border-line bg-surface"
       }`}
     >
       <input
