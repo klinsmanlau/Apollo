@@ -177,7 +177,8 @@ curl -s -H "Authorization: Bearer $APOLLO_API_KEY" \
   "status": "in_progress",
   "environment": "staging",
   "version": "RC-42",
-  "folder": { "id": "cf_123", "name": "Sprint 42" },
+  "folder": { "id": "cf_123", "name": "Regression" },
+  "folderPath": ["Automated", "Android", "Regression"],
   "startDate": "2026-09-22T00:00:00.000Z",
   "endDate": "2026-09-26T00:00:00.000Z",
   "createdAt": "2026-09-22T02:00:00.000Z",
@@ -201,6 +202,11 @@ curl -s -H "Authorization: Bearer $APOLLO_API_KEY" \
 `pass_auto`. `passRate` = `passed / executed` as a percentage (one decimal), or
 `null` when nothing has been executed. `status` (cycle-level) is Apollo's
 `CycleStatus`.
+
+`folder` is the cycle's immediate folder (or `null`); `folderPath` is the full
+ancestor chain of folder names, root → leaf (or `null` when the cycle has no
+folder). Use `folderPath` to classify a cycle by its hierarchy (e.g. detect
+"Automated" / "Android" / "Regression" anywhere in the path).
 
 > **Getting the latest cycle's results:** call this endpoint, take `data[0].key`,
 > then call the executions endpoint with `?cycleKey=<that key>`. Or read the

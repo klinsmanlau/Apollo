@@ -38,6 +38,23 @@ function zeroCounts(): Record<ExecutionStatus, number> {
   >;
 }
 
+type FolderNode = { id: string; name: string; parentFolderId: string | null };
+
+/** Ancestor folder names from root to leaf, walking `parentFolderId`. Guards
+ *  against cycles in the tree. */
+function buildFolderPath(folderId: string, byId: Map<string, FolderNode>): string[] {
+  const path: string[] = [];
+  const seen = new Set<string>();
+  let cur: string | null = folderId;
+  while (cur && byId.has(cur) && !seen.has(cur)) {
+    seen.add(cur);
+    const f: FolderNode = byId.get(cur)!;
+    path.push(f.name);
+    cur = f.parentFolderId;
+  }
+  return path.reverse();
+}
+
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ projectId: string }> }
@@ -85,16 +102,26 @@ export async function GET(
     prisma.testRun.count({ where }),
   ]);
 
-  // One grouped query for the status counts of every cycle on this page.
+  // In parallel: status counts for every cycle on this page, and the project's
+  // cycle-folder tree (so we can build each cycle's full ancestor path).
   const ids = rows.map((r) => r.id);
-  const grouped =
+  const needFolders = rows.some((r) => r.folder);
+  const [grouped, folders] = await Promise.all([
     ids.length > 0
-      ? await prisma.testExecution.groupBy({
+      ? prisma.testExecution.groupBy({
           by: ["runId", "status"],
           where: { runId: { in: ids } },
           _count: { _all: true },
         })
-      : [];
+      : Promise.resolve([] as { runId: string; status: ExecutionStatus; _count: { _all: number } }[]),
+    needFolders
+      ? prisma.cycleFolder.findMany({
+          where: { projectId },
+          select: { id: true, name: true, parentFolderId: true },
+        })
+      : Promise.resolve([] as { id: string; name: string; parentFolderId: string | null }[]),
+  ]);
+  const folderById = new Map<string, FolderNode>(folders.map((f) => [f.id, f]));
 
   const countsByRun = new Map<string, Record<ExecutionStatus, number>>();
   for (const g of grouped) {
@@ -116,6 +143,10 @@ export async function GET(
       environment: c.environment,
       version: c.version,
       folder: c.folder ? { id: c.folder.id, name: c.folder.name } : null,
+      // Full ancestor chain root->leaf, so consumers can classify by folder
+      // hierarchy (e.g. "Automated" / "Android" / "Regression") without relying
+      // on the leaf name alone.
+      folderPath: c.folder ? buildFolderPath(c.folder.id, folderById) : null,
       startDate: c.startDate ? c.startDate.toISOString() : null,
       endDate: c.endDate ? c.endDate.toISOString() : null,
       createdAt: c.createdAt.toISOString(),
