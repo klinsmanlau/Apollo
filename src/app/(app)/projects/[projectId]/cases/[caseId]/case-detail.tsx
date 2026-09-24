@@ -641,13 +641,6 @@ export function CaseDetail({
                   />
                 </div>
               </div>
-              <button
-                type="button"
-                title="Coming soon"
-                className="btn btn-accent"
-              >
-                ✨ Automate Test
-              </button>
               <div className="ml-auto flex items-center gap-1.5">
                 <span className="text-xs font-medium text-muted">Data type:</span>
                 <span className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 text-xs text-subtle">
