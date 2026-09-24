@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser, getProjectRole } from "@/lib/auth";
 import { PriorityFlag, StatusBadge } from "@/components/ui";
 import { ProjectTabs } from "../project-tabs";
-import { ArrowLeft, Play } from "@/components/icons";
+import { ArrowLeft } from "@/components/icons";
 
 export default async function MyWorkPage({
   params,
@@ -89,12 +89,12 @@ export default async function MyWorkPage({
                     )}
                     {run.name}
                   </Link>
-                  <Link
+                  {/* <Link
                     href={`/projects/${projectId}/cycles/${run.key ?? run.id}/play`}
                     className="btn btn-sm btn-accent shrink-0"
                   >
                     <Play size={12} /> Play
-                  </Link>
+                  </Link> */}
                 </div>
                 <table className="w-full text-sm">
                   <tbody>

@@ -862,12 +862,6 @@ export function TestPlayer({
             <h2 className="text-sm font-semibold text-fg">
               Test Cases <span className="text-subtle">{execs.length}</span>
             </h2>
-            <button
-              onClick={() => goTo(0)}
-              className="btn btn-sm btn-accent"
-            >
-              ✨ Run All
-            </button>
           </div>
           <input
             value={search}

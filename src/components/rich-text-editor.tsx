@@ -16,6 +16,7 @@ import {
   Link as LinkIcon,
   Code,
   ClearFormat,
+  Trash,
 } from "@/components/icons";
 
 /**
@@ -32,6 +33,14 @@ import {
 type Cmd =
   | { kind: "cmd"; command: string; value?: string }
   | { kind: "custom"; run: () => void };
+
+// Newly inserted media is fitted into this box (px) once its real dimensions
+// are known, so neither a wide nor a tall (portrait) file lands oversized. The
+// user drags a corner handle from there to resize. DEFAULT_MEDIA_WIDTH is only
+// the pre-load width, before intrinsic dimensions are available.
+const DEFAULT_MEDIA_MAX_W = 320;
+const DEFAULT_MEDIA_MAX_H = 240;
+const DEFAULT_MEDIA_WIDTH = 240;
 
 export function RichTextEditor({
   value,
@@ -93,8 +102,10 @@ export function RichTextEditor({
     measureMedia();
   }
 
-  // Drag the bottom-right handle to resize the media, preserving aspect ratio.
-  function startResize(e: React.PointerEvent) {
+  // Drag a corner handle to resize the media, preserving aspect ratio. `signX`
+  // is +1 for right-edge handles and -1 for left-edge ones, so dragging any
+  // corner outward enlarges and inward shrinks.
+  function startResize(e: React.PointerEvent, signX: number) {
     e.preventDefault();
     const el = selEl.current;
     if (!el) return;
@@ -105,7 +116,9 @@ export function RichTextEditor({
     const maxW = ref.current?.clientWidth ?? 4000;
 
     const move = (ev: PointerEvent) => {
-      const w = Math.round(Math.min(maxW, Math.max(40, startW + (ev.clientX - startX))));
+      const w = Math.round(
+        Math.min(maxW, Math.max(40, startW + signX * (ev.clientX - startX)))
+      );
       el.style.width = `${w}px`;
       el.style.height = `${Math.round(w * ratio)}px`;
       measureMedia();
@@ -117,6 +130,49 @@ export function RichTextEditor({
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+  }
+
+  // Once a freshly inserted element knows its intrinsic size, scale it down to
+  // fit the default box (never enlarge), set explicit width/height, and persist.
+  function fitToBox(el: HTMLImageElement | HTMLVideoElement) {
+    const iw = el instanceof HTMLVideoElement ? el.videoWidth : el.naturalWidth;
+    const ih = el instanceof HTMLVideoElement ? el.videoHeight : el.naturalHeight;
+    if (!iw || !ih) return;
+    const maxW = Math.min(DEFAULT_MEDIA_MAX_W, ref.current?.clientWidth ?? DEFAULT_MEDIA_MAX_W);
+    const scale = Math.min(maxW / iw, DEFAULT_MEDIA_MAX_H / ih, 1);
+    el.style.width = `${Math.round(iw * scale)}px`;
+    el.style.height = `${Math.round(ih * scale)}px`;
+    if (ref.current) onChange(ref.current.innerHTML);
+  }
+
+  // Locate the just-inserted element by its `data-fit` marker, drop the marker,
+  // and fit it to the default box — now if its size is already known, else once
+  // it loads (image) / its metadata arrives (video).
+  function fitInserted<T extends HTMLImageElement | HTMLVideoElement>(
+    selector: string,
+    ready: (el: T) => boolean
+  ) {
+    const el = ref.current?.querySelector<T>(selector);
+    if (!el) return;
+    el.removeAttribute("data-fit");
+    const run = () => fitToBox(el);
+    if (ready(el)) {
+      run();
+    } else {
+      const evt = el instanceof HTMLVideoElement ? "loadedmetadata" : "load";
+      el.addEventListener(evt, run, { once: true });
+    }
+  }
+
+  // Remove the selected image/video from the editor.
+  function deleteSelected() {
+    const el = selEl.current;
+    if (!el) return;
+    el.remove();
+    selectMedia(null);
+    ref.current?.focus();
+    sync();
+    if (ref.current) onChange(ref.current.innerHTML);
   }
 
   // Seed the DOM once; thereafter the browser owns the content.
@@ -197,8 +253,10 @@ export function RichTextEditor({
         sel.removeAllRanges();
         sel.addRange(savedRange.current);
       }
-      document.execCommand("insertImage", false, url);
-      sync();
+      insertHTML(
+        `<img data-fit src="${url}" style="width:${DEFAULT_MEDIA_WIDTH}px;max-width:100%;height:auto" />`
+      );
+      fitInserted<HTMLImageElement>("img[data-fit]", (el) => el.complete);
       if (ref.current) onChange(ref.current.innerHTML);
     } catch (err) {
       setImgError(err instanceof Error ? err.message : "Could not add the image.");
@@ -222,8 +280,9 @@ export function RichTextEditor({
         sel.addRange(savedRange.current);
       }
       insertHTML(
-        `<video controls src="${url}" style="max-width:100%;border-radius:6px"></video><p><br></p>`
+        `<video data-fit controls src="${url}" style="width:${DEFAULT_MEDIA_WIDTH}px;max-width:100%;height:auto;border-radius:6px"></video><p><br></p>`
       );
+      fitInserted<HTMLVideoElement>("video[data-fit]", (el) => el.readyState >= 1);
       if (ref.current) onChange(ref.current.innerHTML);
     } catch (err) {
       setImgError(err instanceof Error ? err.message : "Could not add the video.");
@@ -308,6 +367,15 @@ export function RichTextEditor({
   ];
 
   const DIVIDERS = new Set(["strike", "sup", "ol", "code"]); // after these keys
+
+  // The four corner resize handles. `signX` drives width from the drag delta:
+  // right-edge corners grow with +dx, left-edge corners with -dx.
+  const HANDLES = [
+    { key: "nw", signX: -1, cls: "-top-1.5 -left-1.5 cursor-nwse-resize" },
+    { key: "ne", signX: 1, cls: "-top-1.5 -right-1.5 cursor-nesw-resize" },
+    { key: "sw", signX: -1, cls: "-bottom-1.5 -left-1.5 cursor-nesw-resize" },
+    { key: "se", signX: 1, cls: "-bottom-1.5 -right-1.5 cursor-nwse-resize" },
+  ];
 
   return (
     <div
@@ -399,13 +467,27 @@ export function RichTextEditor({
             className="pointer-events-none absolute z-20 rounded-sm ring-2 ring-ring"
             style={{ left: selBox.x, top: selBox.y, width: selBox.w, height: selBox.h }}
           >
-            <span
-              // Keep focus/selection in the editor so the outline survives the drag.
+            {HANDLES.map((h) => (
+              <span
+                key={h.key}
+                // Keep focus/selection in the editor so the outline survives the drag.
+                onMouseDown={(e) => e.preventDefault()}
+                onPointerDown={(e) => startResize(e, h.signX)}
+                title="Drag to resize"
+                className={`pointer-events-auto absolute h-3.5 w-3.5 rounded-sm border border-white bg-ring shadow-sm ${h.cls}`}
+              />
+            ))}
+            <button
+              type="button"
+              // Keep the selection so the button click doesn't blur the editor.
               onMouseDown={(e) => e.preventDefault()}
-              onPointerDown={startResize}
-              title="Drag to resize"
-              className="pointer-events-auto absolute -bottom-1.5 -right-1.5 h-3.5 w-3.5 cursor-nwse-resize rounded-sm border border-white bg-ring shadow-sm"
-            />
+              onClick={deleteSelected}
+              title="Remove"
+              aria-label="Remove"
+              className="pointer-events-auto absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-md border border-line bg-surface/90 text-muted shadow-sm backdrop-blur-sm transition-colors hover:border-red-600 hover:bg-red-600 hover:text-white"
+            >
+              <Trash size={13} />
+            </button>
           </div>
         )}
       </div>
