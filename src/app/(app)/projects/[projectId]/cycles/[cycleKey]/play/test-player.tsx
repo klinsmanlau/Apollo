@@ -458,6 +458,51 @@ function fmtEst(sec: number | null): string {
   return `${h}:${String(m).padStart(2, "0")}`;
 }
 
+// A colored assignee chip (Zephyr-style) for the case list. Color is derived
+// from the name so the same tester is always the same hue.
+const AVATAR_BG = [
+  "bg-red-500",
+  "bg-orange-500",
+  "bg-amber-500",
+  "bg-green-600",
+  "bg-teal-500",
+  "bg-sky-600",
+  "bg-indigo-500",
+  "bg-violet-500",
+  "bg-pink-500",
+];
+function avatarColor(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+  return AVATAR_BG[Math.abs(h) % AVATAR_BG.length];
+}
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+function Avatar({ name }: { name: string | null }) {
+  if (!name) {
+    return (
+      <span
+        title="Unassigned"
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-dashed border-line text-[9px] text-subtle"
+      >
+        —
+      </span>
+    );
+  }
+  return (
+    <span
+      title={name}
+      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-semibold text-white ${avatarColor(name)}`}
+    >
+      {initials(name)}
+    </span>
+  );
+}
+
 function Section({
   title,
   right,
@@ -548,6 +593,8 @@ function StatusDropdown({
 const inlineCls =
   "w-full rounded-md border border-transparent bg-transparent px-2 py-1.5 text-sm text-fg transition-colors hover:bg-surface-muted focus:border-line focus:bg-surface focus:outline-none placeholder:text-subtle";
 const labelCls = "mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted";
+// Stronger label for the Test Script columns — reads as a header, not a caption.
+const stepLabelCls = "mb-1 block text-[11px] font-bold uppercase tracking-wide text-fg";
 
 /** One step-status toggle. Fixed 26px square with centred icon so the three
  *  stack in a straight vertical line regardless of glyph. */
@@ -625,6 +672,62 @@ export function TestPlayer({
   // Server-rejected action (e.g. Passing without an attachment).
   const [actionError, setActionError] = useState<string | null>(null);
   const cur = execs[idx];
+
+  // Resizable split between the case list (left rail) and the execution panel.
+  // The width only applies on wide screens (lg+); below that the two stack. It
+  // persists per-browser in localStorage.
+  const RAIL_MIN = 240;
+  const RAIL_MAX = 640;
+  const RAIL_COOKIE = "apollo_tp_rail";
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [isWide, setIsWide] = useState(false);
+  const [railWidth, setRailWidth] = useState(320);
+  const railWidthRef = useRef(320);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const sync = () => setIsWide(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
+    try {
+      const v = parseInt(localStorage.getItem(RAIL_COOKIE) ?? "", 10);
+      if (!Number.isNaN(v)) {
+        const w = Math.min(RAIL_MAX, Math.max(RAIL_MIN, v));
+        setRailWidth(w);
+        railWidthRef.current = w;
+      }
+    } catch {}
+    // Mount-only: load the saved width once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function startRailDrag(e: React.PointerEvent) {
+    e.preventDefault();
+    const left = bodyRef.current?.getBoundingClientRect().left ?? 0;
+    const move = (ev: PointerEvent) => {
+      const w = Math.min(RAIL_MAX, Math.max(RAIL_MIN, Math.round(ev.clientX - left)));
+      railWidthRef.current = w;
+      setRailWidth(w);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      try {
+        localStorage.setItem(RAIL_COOKIE, String(railWidthRef.current));
+      } catch {}
+    };
+    // Suppress text selection / flicker while dragging.
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
 
   // Assignee select is keyed by user id (the FK); label is the display name.
   const assigneeOpts: Opt[] = data.users.map((u) => ({
@@ -718,11 +821,29 @@ export function TestPlayer({
       status: results[stepIndex]?.status === status ? "" : status,
       actual: results[stepIndex]?.actual,
     };
-    // Step results are independent of the case status: recording steps never
-    // changes it. The tester sets the case status explicitly via the status
-    // dropdown, where the evidence gate (an attachment or an image in an actual
-    // result) is enforced on Pass.
-    patchExec(execId, { stepResults: results });
+    // Recording a step normally leaves the case status alone — the tester sets
+    // the verdict explicitly via the dropdown. But once the case HAS a verdict
+    // (Pass/Fail/Blocked), keep it consistent with the steps, worst-status-wins
+    // to match Zephyr:
+    //   • any failed step        → Fail   (Fail outranks Blocked)
+    //   • else any blocked step   → Blocked
+    //   • else every step passing → Pass, but only when evidence exists, so the
+    //     Pass gate is never bypassed.
+    // A not-yet-executed case is left alone so recording steps doesn't force a
+    // verdict before the tester is ready.
+    const patch: Partial<PlayerExec> = { stepResults: results };
+    const hasVerdict =
+      e.status === "pass" || e.status === "fail" || e.status === "blocked";
+    if (hasVerdict) {
+      const allPass =
+        e.caseSteps.length > 0 &&
+        e.caseSteps.every((_, idx) => results[idx]?.status === "pass");
+      if (results.some((r) => r.status === "fail")) patch.status = "fail";
+      else if (results.some((r) => r.status === "blocked")) patch.status = "blocked";
+      else if (allPass && hasEvidence({ attachments: e.attachments, stepResults: results }))
+        patch.status = "pass";
+    }
+    patchExec(execId, patch);
   }
 
   function setStepActual(execId: string, stepIndex: number, html: string) {
@@ -854,10 +975,16 @@ export function TestPlayer({
         </div>
       </div>
 
-      {/* Body: left rail + execution panel */}
-      <div className="mt-3 grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+      {/* Body: left rail + execution panel (draggable split on lg+) */}
+      <div
+        ref={bodyRef}
+        className="mt-3 flex min-h-0 flex-1 flex-col gap-4 lg:flex-row lg:gap-0"
+      >
         {/* Left rail */}
-        <aside className="card flex min-h-0 flex-col p-3">
+        <aside
+          style={isWide ? { width: railWidth } : undefined}
+          className="card flex min-h-0 flex-col p-3 lg:shrink-0"
+        >
           <div className="mb-2 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-fg">
               Test Cases <span className="text-subtle">{execs.length}</span>
@@ -901,7 +1028,7 @@ export function TestPlayer({
                 </>
               )}
             </div>
-            <label className="flex cursor-pointer items-center gap-1.5 text-muted">
+            <label className="ml-auto flex cursor-pointer items-center gap-1.5 text-muted">
               <input
                 type="checkbox"
                 checked={assignedToMe}
@@ -918,42 +1045,68 @@ export function TestPlayer({
             {groups.map((g) => (
               <div key={g.key}>
                 {g.label && (
-                  <div className="mb-1 flex items-center justify-between text-xs font-semibold text-muted">
-                    <span>{g.label}</span>
-                    <span className="text-subtle">{g.items.length}</span>
+                  <div className="mb-1.5 flex items-center justify-between border-b border-line/60 pb-1">
+                    <span className="text-xs font-bold text-fg">{g.label}</span>
+                    <span className="text-[11px] text-subtle">
+                      {g.items.length} test case{g.items.length === 1 ? "" : "s"}
+                    </span>
                   </div>
                 )}
-                <ul className="space-y-1">
-                  {g.items.map((e) => (
+                <ul className="space-y-px">
+                  {g.items.map((e) => {
+                    const selected = cur?.id === e.id;
+                    return (
                     <li
                       key={e.id}
-                      className={`rounded-md border-l-4 ${execMeta(e.status).border} ${
-                        cur?.id === e.id ? "bg-surface-muted" : ""
+                      className={`rounded border border-l-4 transition-colors ${execMeta(e.status).border} ${
+                        selected
+                          ? "border-ring/50 bg-ring/5 ring-1 ring-inset ring-ring/40"
+                          : "border-line bg-surface hover:bg-surface-muted/50"
                       }`}
                     >
                       <button
                         onClick={() => goTo(execs.findIndex((x) => x.id === e.id))}
-                        className="w-full px-2 py-1.5 text-left text-xs hover:bg-surface-muted"
+                        className="block w-full px-2 pt-1.5 pb-0.5 text-left"
                       >
-                        <div className="flex items-center gap-1.5">
-                          <span className={flagColor[e.casePriority]} title={e.casePriority}>
-                            <Flag size={12} />
-                          </span>
-                          <span className="truncate font-mono text-[11px] text-ring">
-                            {e.caseKey ?? "—"}
-                          </span>
+                        <div className="flex items-start justify-between gap-1.5">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1">
+                              <span
+                                className={`shrink-0 ${flagColor[e.casePriority]}`}
+                                title={`${e.casePriority} priority`}
+                              >
+                                <Flag size={11} />
+                              </span>
+                              <span className="truncate font-mono text-[11px] font-medium text-ring">
+                                {e.caseKey ?? "—"}
+                                {e.caseVersionNo != null && (
+                                  <span className="ml-1 font-normal text-subtle">
+                                    ({e.caseVersionNo}.0)
+                                  </span>
+                                )}
+                              </span>
+                              {e.actualTime ? (
+                                <span className="ml-auto shrink-0 font-mono text-[10px] text-subtle">
+                                  {fmt(e.actualTime)}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="mt-0.5 truncate text-xs leading-tight text-fg">
+                              {e.caseTitle}
+                            </div>
+                          </div>
+                          <Avatar name={e.assignedToName} />
                         </div>
-                        <div className="mt-0.5 truncate text-fg">{e.caseTitle}</div>
                       </button>
                       {/* Set all below */}
-                      <div className="relative px-2 pb-1.5">
+                      <div className="relative flex justify-end px-2 pb-1">
                         <button
                           onClick={() =>
                             setSetBelowFor((v) => (v === e.id ? null : e.id))
                           }
-                          className="text-[11px] text-subtle hover:text-fg"
+                          className="inline-flex items-center gap-0.5 text-[10px] text-subtle hover:text-fg"
                         >
-                          Set all below to: <ChevronDown size={12} />
+                          Set all below to: <ChevronDown size={11} />
                         </button>
                         {setBelowFor === e.id && (
                           <>
@@ -961,7 +1114,7 @@ export function TestPlayer({
                               className="fixed inset-0 z-10"
                               onClick={() => setSetBelowFor(null)}
                             />
-                            <div className="absolute left-2 z-20 mt-1 w-48 overflow-hidden rounded-md border border-line bg-surface py-1 shadow-xl">
+                            <div className="absolute right-2.5 top-full z-20 mt-1 w-48 overflow-hidden rounded-md border border-line bg-surface py-1 shadow-xl">
                               {EXEC_STATUS_META.map((s) => (
                                 <button
                                   key={s.value}
@@ -977,7 +1130,8 @@ export function TestPlayer({
                         )}
                       </div>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               </div>
             ))}
@@ -987,8 +1141,24 @@ export function TestPlayer({
           </div>
         </aside>
 
+        {/* Drag handle (wide screens only) */}
+        <div
+          onPointerDown={startRailDrag}
+          onDoubleClick={() => {
+            setRailWidth(320);
+            railWidthRef.current = 320;
+            try {
+              localStorage.setItem(RAIL_COOKIE, "320");
+            } catch {}
+          }}
+          title="Drag to resize · double-click to reset"
+          className="group relative hidden w-3 shrink-0 cursor-col-resize touch-none lg:block"
+        >
+          <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-line transition-colors group-hover:bg-ring" />
+        </div>
+
         {/* Execution panel */}
-        <section className="card min-h-0 overflow-y-auto p-4">
+        <section className="card min-h-0 min-w-0 flex-1 overflow-y-auto p-4">
           {!cur ? (
             <div className="flex h-full items-center justify-center text-sm text-subtle">
               No test cases in this cycle. Add some from the cycle page.
@@ -1182,78 +1352,81 @@ export function TestPlayer({
                 {cur.caseSteps.length === 0 ? (
                   <p className="text-sm text-subtle">This case has no step-by-step script.</p>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="divide-y divide-line overflow-hidden rounded-lg border border-line">
                     {cur.caseSteps.map((s, i) => {
                       const st = cur.stepResults[i]?.status || "";
-                      const borderCls =
+                      // Status shows only as a colored stripe down the number
+                      // column — no per-card outline, keeping the list clean.
+                      const stripe =
                         st === "pass"
                           ? "border-l-green-500"
                           : st === "fail"
                             ? "border-l-red-500"
                             : st === "blocked"
                               ? "border-l-blue-500"
-                              : "border-l-line";
+                              : "border-l-transparent";
                       return (
-                        <div
-                          key={i}
-                          className={`overflow-hidden rounded-lg border border-line border-l-4 ${borderCls}`}
-                        >
-                          <div className="grid grid-cols-[2rem_1fr_1fr_1fr_auto] gap-3 p-2">
-                            <span className="pt-1.5 text-center text-sm font-medium text-subtle">
-                              {i + 1}
-                            </span>
-                            <div>
-                              <p className={labelCls}>Step</p>
-                              <div className="whitespace-pre-wrap text-sm text-fg">{s.action}</div>
+                        <div key={i} className="grid grid-cols-[3rem_minmax(0,1fr)_auto]">
+                          {/* Number column carries the status stripe */}
+                          <div className={`flex justify-center border-l-4 bg-surface-muted/30 pt-3 ${stripe}`}>
+                            <span className="text-lg font-semibold text-subtle">{i + 1}</span>
+                          </div>
+                          {/* Step / data / expected, then the actual-result editor */}
+                          <div className="min-w-0 px-3 py-2.5">
+                            <div className="grid gap-x-6 gap-y-2 sm:grid-cols-3">
+                              <div>
+                                <p className={stepLabelCls}>Step</p>
+                                <div className="whitespace-pre-wrap text-[13px] text-fg">{s.action}</div>
+                              </div>
+                              <div>
+                                <p className={stepLabelCls}>Test Data</p>
+                                <div className="whitespace-pre-wrap text-[13px] text-muted">{s.testData || "None"}</div>
+                              </div>
+                              <div>
+                                <p className={stepLabelCls}>Expected Result</p>
+                                <div className="whitespace-pre-wrap text-[13px] text-muted">{s.expected}</div>
+                              </div>
                             </div>
-                            <div>
-                              <p className={labelCls}>Test Data</p>
-                              <div className="whitespace-pre-wrap text-sm text-muted">{s.testData || "None"}</div>
-                            </div>
-                            <div>
-                              <p className={labelCls}>Expected Result</p>
-                              <div className="whitespace-pre-wrap text-sm text-muted">{s.expected}</div>
-                            </div>
-                            {/* Status rail — icons share one box size + centering
-                                so Pass/Fail/Blocked line up vertically. */}
-                            <div className="flex flex-col items-center gap-1">
-                              <StepStatusButton
-                                active={st === "pass"}
-                                onClick={() => setStep(cur.id, i, "pass")}
-                                title="Pass"
-                                activeCls="bg-green-600 text-white"
-                                idleCls="text-green-600 hover:bg-green-500/10"
-                              >
-                                <Check size={15} />
-                              </StepStatusButton>
-                              <StepStatusButton
-                                active={st === "fail"}
-                                onClick={() => setStep(cur.id, i, "fail")}
-                                title="Fail"
-                                activeCls="bg-red-600 text-white"
-                                idleCls="text-red-600 hover:bg-red-500/10"
-                              >
-                                <X size={15} />
-                              </StepStatusButton>
-                              <StepStatusButton
-                                active={st === "blocked"}
-                                onClick={() => setStep(cur.id, i, "blocked")}
-                                title="Blocked"
-                                activeCls="bg-blue-600 text-white"
-                                idleCls="text-blue-600 hover:bg-blue-500/10"
-                              >
-                                <Ban size={15} />
-                              </StepStatusButton>
+                            <div className="mt-3">
+                              <p className={stepLabelCls}>Actual Result</p>
+                              <RichTextEditor
+                                value={cur.stepResults[i]?.actual ?? ""}
+                                onChange={(html) => setStepActual(cur.id, i, html)}
+                                onImageUpload={embedInlineImage}
+                                onVideoUpload={(file) => uploadStepVideo(projectId, cur.id, file)}
+                                quiet
+                              />
                             </div>
                           </div>
-                          <div className="border-t border-line bg-surface-muted/30 px-2 py-2">
-                            <p className={`${labelCls} px-1`}>Actual Result</p>
-                            <RichTextEditor
-                              value={cur.stepResults[i]?.actual ?? ""}
-                              onChange={(html) => setStepActual(cur.id, i, html)}
-                              onImageUpload={embedInlineImage}
-                              onVideoUpload={(file) => uploadStepVideo(projectId, cur.id, file)}
-                            />
+                          {/* Status rail — one divider, icons stacked vertically */}
+                          <div className="flex flex-col items-center gap-1 border-l border-line px-1.5 py-2.5">
+                            <StepStatusButton
+                              active={st === "pass"}
+                              onClick={() => setStep(cur.id, i, "pass")}
+                              title="Pass"
+                              activeCls="bg-green-600 text-white"
+                              idleCls="text-green-600 hover:bg-green-500/10"
+                            >
+                              <Check size={15} />
+                            </StepStatusButton>
+                            <StepStatusButton
+                              active={st === "fail"}
+                              onClick={() => setStep(cur.id, i, "fail")}
+                              title="Fail"
+                              activeCls="bg-red-600 text-white"
+                              idleCls="text-red-600 hover:bg-red-500/10"
+                            >
+                              <X size={15} />
+                            </StepStatusButton>
+                            <StepStatusButton
+                              active={st === "blocked"}
+                              onClick={() => setStep(cur.id, i, "blocked")}
+                              title="Blocked"
+                              activeCls="bg-blue-600 text-white"
+                              idleCls="text-blue-600 hover:bg-blue-500/10"
+                            >
+                              <Ban size={15} />
+                            </StepStatusButton>
                           </div>
                         </div>
                       );
@@ -1262,26 +1435,6 @@ export function TestPlayer({
                 )}
               </Section>
 
-              {/* Nav */}
-              <div className="flex items-center justify-between border-t border-line pt-4">
-                <button
-                  disabled={idx === 0}
-                  onClick={() => goTo(idx - 1)}
-                  className="btn btn-secondary"
-                >
-                  <ArrowLeft size={14} /> Previous
-                </button>
-                <span className="text-xs text-subtle">
-                  {idx + 1} of {execs.length}
-                </span>
-                <button
-                  disabled={idx >= execs.length - 1}
-                  onClick={() => goTo(idx + 1)}
-                  className="btn btn-primary"
-                >
-                  Next <ChevronRight size={13} />
-                </button>
-              </div>
             </div>
           )}
         </section>
