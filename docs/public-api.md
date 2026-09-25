@@ -22,6 +22,20 @@ Every request must send a valid key:
 Authorization: Bearer apollo_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
+### Getting a key
+
+Keys are issued by an Apollo maintainer — they're not self-service. To request
+one, tell the maintainer:
+
+- **What** the integration is (e.g. "QA dashboard, prod").
+- **Which scopes** you need — `cases:read`, `executions:read`, `cycles:read`.
+- **Which project**, or "all projects" if you crawl across pods.
+
+The maintainer mints it (see [Managing keys](#managing-keys)) and sends you the
+raw key **once** over a secure channel. Store it in your app's secret store
+(env var / secret manager) — it can't be retrieved again, only re-issued. If a
+key is lost or leaked, ask for it to be revoked and re-issued.
+
 Keys are:
 
 - **Scoped** — each key grants specific scopes (e.g. `cases:read`,
@@ -295,7 +309,10 @@ curl -s \
 
 ## Managing keys
 
-Mint a key (raw value printed once):
+_For Apollo maintainers — run from the Apollo repo._
+
+Mint a key (raw value printed once — send it to the integrator over a secure
+channel):
 
 ```bash
 npm run apikey:create -- \
@@ -304,11 +321,18 @@ npm run apikey:create -- \
   --project <projectId>
 ```
 
-Omit `--project` for an all-projects key. Valid scopes: `cases:read`,
-`executions:read`, `cycles:read`.
+Omit `--project` for an all-projects key. Add or change scopes on an existing
+key without re-minting (the raw key is unchanged):
 
-**Revoke** a key by setting `revokedAt` on its `ApiKey` row (e.g. via
-`prisma studio` or a DB update). Revoked keys immediately return `401`.
+```bash
+npm run apikey:update -- --name "qa-dashboard (prod)" --add-scopes cycles:read
+```
+
+Valid scopes: `cases:read`, `executions:read`, `cycles:read`.
+
+**Revoke** a key with `npm run apikey:update -- --name "<label>" --revoke`
+(or set `revokedAt` on its `ApiKey` row via `npm run db:studio`). Revoked keys
+immediately return `401`.
 
 ---
 
