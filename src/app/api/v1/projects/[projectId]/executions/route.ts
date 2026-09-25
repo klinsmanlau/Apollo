@@ -34,6 +34,7 @@ export async function GET(
   const pageSize = coercePageSize(url.searchParams.get("pageSize"));
   const updatedSince = parseUpdatedSince(url.searchParams.get("updatedSince"));
   const cycleKey = url.searchParams.get("cycleKey")?.trim();
+  const caseKey = url.searchParams.get("caseKey")?.trim();
 
   // Optional status filter: comma-separated ExecutionStatus values.
   const STATUSES = new Set([
@@ -54,6 +55,7 @@ export async function GET(
       projectId,
       ...(cycleKey ? { key: cycleKey } : {}),
     },
+    ...(caseKey ? { case: { key: caseKey } } : {}),
     ...(statuses.length > 0
       ? { status: { in: statuses as ("not_executed" | "in_progress" | "pass" | "pass_auto" | "fail" | "blocked")[] } }
       : {}),

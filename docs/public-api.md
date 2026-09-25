@@ -130,6 +130,14 @@ curl -s \
   "coverage": ["PODCC-456"],
   "estimatedTimeSeconds": 300,
   "archived": false,
+  "suitePath": ["Cards", "E2E", "Wallet"],
+  "customFields": {
+    "POD": "Cards",
+    "Automation Status": "Automated",
+    "Automation Feasibility": "Automatable",
+    "Risk Tier": "Blocker"
+  },
+  "createdAt": "2026-08-01T02:00:00.000Z",
   "updatedAt": "2026-09-20T08:15:00.000Z"
 }
 ```
@@ -137,6 +145,11 @@ curl -s \
 - `priority`: `high | medium | low`
 - `type`: `functional | regression | smoke | integration | performance | security | usability`
 - `status` (case lifecycle): `draft | approved | deprecated`
+- `suitePath`: the case's folder chain, root → leaf (empty array if none) — use it
+  to detect subtrees like "E2E" or classify by pod folder.
+- `customFields`: the configured custom fields present on the case, as a string
+  map. Keys include `POD`, `Automation Status`, `Automation Feasibility`,
+  `Risk Tier`, `Complexity`, `Language`, etc. Absent keys are omitted.
 
 ---
 
@@ -232,6 +245,7 @@ coverage, pass-rates, and release readiness.
 | `updatedSince` | ISO-8601 | only executions updated at/after this time |
 | `status`       | csv      | filter by status, e.g. `pass,pass_auto` |
 | `cycleKey`     | string   | limit to one cycle, e.g. `TS-R96` |
+| `caseKey`      | string   | limit to one test case, e.g. `TS-T7060` — a case's execution history across cycles (sort/collapse to latest client-side) |
 
 **Example — everything that changed today, only pass/fail:**
 

@@ -5,8 +5,38 @@ import {
   coercePageSize,
   parseUpdatedSince,
 } from "@/lib/api-auth";
+import { CUSTOM_FIELDS } from "@/lib/custom-fields";
 
 export const runtime = "nodejs";
+
+type SuiteNode = { id: string; name: string; parentSuiteId: string | null };
+
+/** Ancestor suite names root->leaf, walking `parentSuiteId` (cycle-guarded). */
+function buildSuitePath(suiteId: string, byId: Map<string, SuiteNode>): string[] {
+  const path: string[] = [];
+  const seen = new Set<string>();
+  let cur: string | null = suiteId;
+  while (cur && byId.has(cur) && !seen.has(cur)) {
+    seen.add(cur);
+    const s: SuiteNode = byId.get(cur)!;
+    path.push(s.name);
+    cur = s.parentSuiteId;
+  }
+  return path.reverse();
+}
+
+/** The configured custom fields present on a case, as a flat string map. Limits
+ *  output to the known keys (Automation Status, Risk Tier, POD, …) so the
+ *  contract is stable and arbitrary imported columns don't leak. */
+function pickCustomFields(bag: unknown): Record<string, string> {
+  const src = bag && typeof bag === "object" ? (bag as Record<string, unknown>) : {};
+  const out: Record<string, string> = {};
+  for (const cf of CUSTOM_FIELDS) {
+    const v = src[cf.key];
+    if (v != null && v !== "") out[cf.key] = String(v);
+  }
+  return out;
+}
 
 /**
  * Public read API — list test cases in a project for external integrations.
@@ -40,7 +70,7 @@ export async function GET(
     ...(updatedSince ? { updatedAt: { gte: updatedSince } } : {}),
   };
 
-  const [rows, total] = await Promise.all([
+  const [rows, total, suites] = await Promise.all([
     prisma.testCase.findMany({
       where,
       orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
@@ -58,11 +88,21 @@ export async function GET(
         coverage: true,
         estimatedTime: true,
         archived: true,
+        suiteId: true,
+        customFields: true,
+        createdAt: true,
         updatedAt: true,
       },
     }),
     prisma.testCase.count({ where }),
+    // The project's suite tree, to build each case's folder path.
+    prisma.testSuite.findMany({
+      where: { projectId },
+      select: { id: true, name: true, parentSuiteId: true },
+    }),
   ]);
+
+  const suiteById = new Map<string, SuiteNode>(suites.map((s) => [s.id, s]));
 
   const data = rows.map((c) => ({
     key: c.key,
@@ -76,6 +116,9 @@ export async function GET(
     coverage: c.coverage,
     estimatedTimeSeconds: c.estimatedTime,
     archived: c.archived,
+    suitePath: buildSuitePath(c.suiteId, suiteById),
+    customFields: pickCustomFields(c.customFields),
+    createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),
   }));
 
