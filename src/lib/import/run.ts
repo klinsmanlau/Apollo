@@ -176,19 +176,65 @@ export async function persistCases(opts: {
   const generatedKeys = await nextCaseKeys(opts.projectId, keylessCount);
   let nextGenerated = 0;
 
-  const createRows = creates.map(({ pc, suiteId }) => {
+  const prepared = creates.map(({ pc, suiteId }) => {
     const key = pc.sourceKey ?? generatedKeys[nextGenerated++];
     return {
-      ...caseData(pc, suiteId),
+      pc,
+      suiteId,
       key,
-      keyNum: parseKey(key)?.num ?? null,
-      sourceKey: pc.sourceKey,
-      createdById: opts.userId,
+      row: {
+        ...caseData(pc, suiteId),
+        key,
+        keyNum: parseKey(key)?.num ?? null,
+        sourceKey: pc.sourceKey,
+        createdById: opts.userId,
+      },
     };
   });
-  for (let i = 0; i < createRows.length; i += CREATE_CHUNK) {
-    const chunk = createRows.slice(i, i + CREATE_CHUNK);
+
+  // A case can already exist under this `key` while carrying no `sourceKey`
+  // (e.g. authored in the UI or imported before sourceKey tracking). The
+  // sourceKey lookup above misses those, so inserting would hit the `key`
+  // unique index. Adopt them instead: update the existing row in place and
+  // stamp its sourceKey. (We only adopt rows with a NULL sourceKey, never one
+  // that already belongs to a different source case.)
+  const adoptable = new Map<string, string>(); // key -> existing id
+  const keys = prepared.map((p) => p.key);
+  for (let i = 0; i < keys.length; i += LOOKUP_CHUNK) {
+    const rows = await prisma.testCase.findMany({
+      where: { key: { in: keys.slice(i, i + LOOKUP_CHUNK) }, sourceKey: null },
+      select: { id: true, key: true },
+    });
+    for (const r of rows) if (r.key) adoptable.set(r.key, r.id);
+  }
+
+  const toInsert = prepared.filter((p) => !adoptable.has(p.key));
+  const toAdopt = prepared.filter((p) => adoptable.has(p.key));
+  // Adopted rows are really updates, not creates — keep the summary honest.
+  created -= toAdopt.length;
+  updated += toAdopt.length;
+
+  for (let i = 0; i < toInsert.length; i += CREATE_CHUNK) {
+    const chunk = toInsert.slice(i, i + CREATE_CHUNK).map((p) => p.row);
     await prisma.testCase.createMany({ data: chunk });
+    progress(chunk.length);
+  }
+
+  for (let i = 0; i < toAdopt.length; i += UPDATE_CONCURRENCY) {
+    const chunk = toAdopt.slice(i, i + UPDATE_CONCURRENCY);
+    await Promise.all(
+      chunk.map((p) =>
+        prisma.testCase.update({
+          where: { id: adoptable.get(p.key)! },
+          data: {
+            ...caseData(p.pc, p.suiteId),
+            key: p.key,
+            keyNum: parseKey(p.key)?.num ?? null,
+            sourceKey: p.pc.sourceKey,
+          },
+        })
+      )
+    );
     progress(chunk.length);
   }
 
